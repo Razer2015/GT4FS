@@ -1,0 +1,3 @@
+[submodule "GTShared"]
+	path = GTShared
+	url = https://github.com/Razer2015/GTShared.git
