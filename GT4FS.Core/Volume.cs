@@ -1,4 +1,5 @@
-﻿using GT.Shared.Polyphony;
+﻿using GT.Shared;
+using GT.Shared.Polyphony;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -10,18 +11,18 @@ namespace GT4FS.Core {
         const ulong TOC31MAGIC = 0xAD90B9AC01000300;
 
         private long _baseOffset = 0;
-        private readonly string _filePath;
         private TocHeader _tocHeader;
         private int _firstBlockOffset;
         private List<int> _offsets;
-        private List<(long Offset, int Length)> _blocks;
+        public List<(long Offset, int Length)> Blocks { get; set; }
+        public string VolumePath { get; }
 
         public Volume(string filePath) {
-            _filePath = filePath;
+            VolumePath = filePath;
         }
 
-        public void Read() {
-            using (var fs = new FileStream(_filePath, FileMode.Open, FileAccess.Read))
+        public void ReadVolume() {
+            using (var fs = new FileStream(VolumePath, FileMode.Open, FileAccess.Read))
             using (var reader = new EndianBinReader(fs, EndianType.LITTLE_ENDIAN)) {
                 _baseOffset = BaseOffset();
                 _tocHeader = new TocHeader(reader, _baseOffset);
@@ -49,7 +50,7 @@ namespace GT4FS.Core {
         ///     Search for the TOC 3.1 in the VOL file and return its offset if found
         /// </summary>
         private long BaseOffset() {
-            using (var fs = new FileStream(_filePath, FileMode.Open, FileAccess.Read))
+            using (var fs = new FileStream(VolumePath, FileMode.Open, FileAccess.Read))
             using (var reader = new EndianBinReader(fs, EndianType.BIG_ENDIAN)) {
                 for (int i = 0; i < Math.Min((reader.BaseStream.Length / 0x800), 10000); i++) {
                     reader.BaseStream.Seek(i * 0x800, SeekOrigin.Begin);
@@ -67,24 +68,24 @@ namespace GT4FS.Core {
         /// </summary>
         /// <param name="index"></param>
         private (long Offset, int Length) GetBlock(int index) {
-            if (_blocks == null || _blocks.Count <= 0) {
+            if (Blocks == null || Blocks.Count <= 0) {
                 ReadBlocks();
             }
 
-            return _blocks[index];
+            return Blocks[index];
         }
 
         /// <summary>
         ///     Return the file offset based on the page given by the TOC (Appends it to the TOC end offset)
         /// </summary>
         /// <param name="pageOffset"></param>
-        private long GetFileOffset(int pageOffset) {
+        public long GetFileOffset(uint pageOffset) {
             return _tocHeader.DataOffset + (pageOffset * _tocHeader.PageLength);
         }
 
         private void ReadEntryOffsets() {
             _offsets = new List<int>();
-            using (var fs = new FileStream(_filePath, FileMode.Open, FileAccess.Read))
+            using (var fs = new FileStream(VolumePath, FileMode.Open, FileAccess.Read))
             using (var reader = new EndianBinReader(fs, EndianType.LITTLE_ENDIAN)) {
                 reader.BaseStream.Seek(_baseOffset + 0x40, SeekOrigin.Begin);
                 var xorKey = 0x14ac327a;
@@ -115,18 +116,18 @@ namespace GT4FS.Core {
         }
 
         private void ReadBlocks() {
-            _blocks = new List<(long Offset, int Length)>();
-            using (var fs = new FileStream(_filePath, FileMode.Open, FileAccess.Read))
+            Blocks = new List<(long Offset, int Length)>();
+            using (var fs = new FileStream(VolumePath, FileMode.Open, FileAccess.Read))
             using (var reader = new EndianBinReader(fs, EndianType.LITTLE_ENDIAN)) {
                 _offsets.Aggregate(_firstBlockOffset, (acc, x) => {
-                    _blocks.Add((_baseOffset + acc, x - acc));
+                    Blocks.Add((_baseOffset + acc, x - acc));
                     return x;
                 });
             }
         }
 
-        private byte[] DecryptBlock(long offset, int length) {
-            using (var fs = new FileStream(_filePath, FileMode.Open, FileAccess.Read))
+        public byte[] DecryptBlock(long offset, int length) {
+            using (var fs = new FileStream(VolumePath, FileMode.Open, FileAccess.Read))
             using (var reader = new EndianBinReader(fs, EndianType.LITTLE_ENDIAN)) {
                 reader.BaseStream.Seek(offset, SeekOrigin.Begin);
                 using (var decompressStream = new MemoryStream()) {
@@ -148,10 +149,21 @@ namespace GT4FS.Core {
                 }
 
                 // Blocks
-                foreach (var (Offset, Length) in _blocks) { // Block at index 0 is garbage?
-                    writer.Write(DecryptBlock(Offset, Length));
+                Directory.CreateDirectory("blocks");
+                using (var sw = new StreamWriter("blocks.txt")) {
+                    int index = 0;
+                    foreach (var (Offset, Length) in Blocks) { // Block at index 0 is garbage?
+                        var buffer = DecryptBlock(Offset, Length);
+                        writer.Write(buffer);
 
-                    //File.WriteAllBytes("block.bin", DecryptBlock(Offset, Length));
+                        using (var ms2 = new MemoryStream(buffer))
+                        using (var reader = new EndianBinReader(ms2, EndianType.LITTLE_ENDIAN)) {
+                            sw.WriteLine($"{index,4} - {reader.ReadInt16().ToString("X4")} {reader.ReadInt16().ToString("X4")} {reader.ReadInt32().ToString("X8")} {reader.ReadInt32().ToString("X8")} {reader.ReadInt32().ToString("X8")}");
+                        }
+
+                        File.WriteAllBytes($"blocks\\block_{index}.bin", buffer);
+                        index++;
+                    }
                 }
 
                 File.WriteAllBytes("toc.bin", ms.ToArray());
