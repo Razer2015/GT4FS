@@ -5,6 +5,21 @@ using System.IO;
 
 namespace GT4FS.Tester {
     class Program {
+        [Verb("info", HelpText = "Print out information.")]
+        class InfoOptions {
+            [Option('r', "read", Required = true, HelpText = "Input file to be processed (GT.VOL file).")]
+            public string Input { get; set; }
+
+            [Option('o', "output", Required = false, HelpText = "Directory to output to (Default: information).")]
+            public string Output { get; set; }
+
+            [Option('d', "debug", Required = false, HelpText = "Write debug information (You most likely don't want this).")]
+            public bool Debug { get; set; }
+
+            [Option('v', "verbose", Required = false, HelpText = "Set output to verbose messages.")]
+            public bool Verbose { get; set; }
+        }
+
         [Verb("extract", HelpText = "Extract the GT4, GTHD, TT game content.")]
         class ExtractOptions {
             [Option('r', "read", Required = true, HelpText = "Input file to be processed (GT.VOL file).")]
@@ -21,10 +36,35 @@ namespace GT4FS.Tester {
         }
 
         static void Main(string[] args) {
-            Parser.Default.ParseArguments<ExtractOptions>(args)
+            Parser.Default.ParseArguments<InfoOptions, ExtractOptions>(args)
                 .MapResult(
+                (InfoOptions opts) => RunInfoAndReturnExitCode(opts),
                 (ExtractOptions opts) => RunAndReturnExitCode(opts),
                 errs => 1);
+        }
+
+        private static object RunInfoAndReturnExitCode(InfoOptions options) {
+            var volume = new Volume(options.Input);
+            volume.ReadVolume();
+            var logWriter = options.Verbose ? new ConsoleWriter() : null;
+            using (var btree = new BTree(volume, logWriter)) {
+                // Output check
+                if (string.IsNullOrEmpty(options.Output)) {
+                    FileAttributes attr = File.GetAttributes(options.Input);
+                    if ((attr & FileAttributes.Directory) == FileAttributes.Directory) {
+                        DirectoryInfo parentDir = Directory.GetParent(options.Input);
+                        options.Output = Path.Combine(parentDir.FullName, "information");
+                    }
+                    else {
+                        var folder = Path.GetDirectoryName(options.Input);
+                        options.Output = Path.Combine(folder, "information");
+                    }
+                }
+
+                btree.WriteFileList(options.Output, options.Debug);
+
+                return 0;
+            }
         }
 
         private static object RunAndReturnExitCode(ExtractOptions options) {

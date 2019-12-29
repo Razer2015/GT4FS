@@ -161,7 +161,7 @@ namespace GT4FS.Core {
                             sw.WriteLine($"{index,4} - {reader.ReadInt16().ToString("X4")} {reader.ReadInt16().ToString("X4")} {reader.ReadInt32().ToString("X8")} {reader.ReadInt32().ToString("X8")} {reader.ReadInt32().ToString("X8")}");
                         }
 
-                        File.WriteAllBytes($"blocks\\block_{index}.bin", buffer);
+                        //File.WriteAllBytes($"blocks\\block_{index}.bin", buffer);
                         index++;
                     }
                 }

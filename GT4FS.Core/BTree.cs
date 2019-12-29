@@ -57,6 +57,62 @@ namespace GT4FS.Core {
             return true;
         }
 
+        public bool WriteFileList(string outputPath, bool debugInfo = false) {
+            if (_nodeEntries == null) {
+                Read();
+            }
+
+            var path = Path.Combine(outputPath, $"filelist.txt");
+            Directory.CreateDirectory(outputPath);
+            _queueWriter?.Enqueue("Writing file list...");
+            using (var sw = new StreamWriter(path, false)) {
+                sw.WriteLine("###################################");
+                sw.WriteLine("#   Made by - Team eventHorizon   #");
+                sw.WriteLine("#    GT4FS - File list creator    #");
+                sw.WriteLine("###################################");
+
+                sw.WriteLine(".");
+                var folders = new List<string>();
+                TraverseNodes(_nodeEntries.ToList(), sw, 1, 1, folders, debugInfo);
+            }
+            Console.WriteLine($"File list written to {path}");
+
+            return true;
+        }
+
+        private void TraverseNodes(IList<NodeEntry> nodeEntries, StreamWriter sw, int parentNodeID, int depth, List<string> prefixFolders, bool debugInfo) {
+            var nodes = nodeEntries.Where(x => x.ParentNode == parentNodeID);
+            for (int i = 0; i < nodes.Count(); i++) {
+                var node = nodes.ElementAtOrDefault(i);
+
+                switch (node.Flag) {
+                    case 0x00: // Dir
+                        var folders = new List<string>(prefixFolders);
+                        if (nodes.Count() - 1 > i) {
+                            sw?.WriteLine($"{string.Join("", prefixFolders)}├── {node.Name}");
+                            folders.Add("│   ");
+                        }
+                        else {
+                            sw?.WriteLine($"{string.Join("", prefixFolders)}└── {node.Name}");
+                            folders.Add("    ");
+                        }
+                        TraverseNodes(nodeEntries, sw, node.NodeID, depth++, folders, debugInfo);
+                        break;
+                    case 0x01: // File
+                    case 0x02: // Compressed file
+                        if (nodes.Count() - 1 > i) {
+                            sw?.WriteLine($"{string.Join("", prefixFolders)}├── {node.Name}{(debugInfo ? $" (Offset: 0x{_volume.GetFileOffset(node.PageOffset).ToString("X8")} - Size: 0x{node.PackedSize.ToString("X8")} - RealSize: 0x{node.RealSize.ToString("X8")} - Unk: 0x{node.Unk.ToString("X8")})" : "")}");
+                        }
+                        else {
+                            sw?.WriteLine($"{string.Join("", prefixFolders)}└── {node.Name}{(debugInfo ? $" (Offset: 0x{_volume.GetFileOffset(node.PageOffset).ToString("X8")} - Size: 0x{node.PackedSize.ToString("X8")} - RealSize: 0x{node.RealSize.ToString("X8")} - Unk: 0x{node.Unk.ToString("X8")})" : "")}");
+                        }
+                        break;
+                    default:
+                        throw new ArgumentOutOfRangeException($"Unknown flag {node.Flag}");
+                }
+            }
+        }
+
         private void Read() {
             foreach (var (Offset, Length) in _volume.Blocks) {
                 var buffer = _volume.DecryptBlock(Offset, Length);
