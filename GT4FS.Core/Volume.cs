@@ -15,48 +15,44 @@ namespace GT4FS.Core {
         private int _firstBlockOffset;
         private List<int> _offsets;
         public List<(long Offset, int Length)> Blocks { get; set; }
-        public string VolumePath { get; }
+        public EndianBinReader VOLReader { get; set; }
 
-        public Volume(string filePath) {
-            VolumePath = filePath;
+        public Volume(Stream stream) {
+            VOLReader = new EndianBinReader(stream, EndianType.BIG_ENDIAN);
         }
 
         public void ReadVolume() {
-            using (var fs = new FileStream(VolumePath, FileMode.Open, FileAccess.Read))
-            using (var reader = new EndianBinReader(fs, EndianType.LITTLE_ENDIAN)) {
-                _baseOffset = BaseOffset();
-                _tocHeader = new TocHeader(reader, _baseOffset);
+            _baseOffset = BaseOffset();
+            VOLReader.Endianess = EndianType.LITTLE_ENDIAN;
+            _tocHeader = new TocHeader(VOLReader, _baseOffset);
 
 #if DEBUG
-                // Debug write what has been decrypted so far (TOC header)
-                using (var ms = new MemoryStream())
-                using (var writer = new EndianBinWriter(ms)) {
-                    _tocHeader.Write(writer);
+            // Debug write what has been decrypted so far (TOC header)
+            using (var ms = new MemoryStream())
+            using (var writer = new EndianBinWriter(ms)) {
+                _tocHeader.Write(writer);
 
-                    File.WriteAllBytes("header.bin", ms.ToArray());
-                }
-#endif
-
-                ReadEntryOffsets();
-                ReadBlocks();
-#if DEBUG
-                // Debug write what has been decrypted so far (TOC header, Offset table, Blocks)
-                DebugWriteBlocks();
-#endif
+                File.WriteAllBytes("header.bin", ms.ToArray());
             }
+#endif
+
+            ReadEntryOffsets();
+            ReadBlocks();
+#if DEBUG
+            // Debug write what has been decrypted so far (TOC header, Offset table, Blocks)
+            DebugWriteBlocks();
+#endif
         }
 
         /// <summary>
         ///     Search for the TOC 3.1 in the VOL file and return its offset if found
         /// </summary>
         private long BaseOffset() {
-            using (var fs = new FileStream(VolumePath, FileMode.Open, FileAccess.Read))
-            using (var reader = new EndianBinReader(fs, EndianType.BIG_ENDIAN)) {
-                for (int i = 0; i < Math.Min((reader.BaseStream.Length / 0x800), 10000); i++) {
-                    reader.BaseStream.Seek(i * 0x800, SeekOrigin.Begin);
-                    if (reader.ReadUInt64() == TOC31MAGIC) {
-                        return i * 0x800;
-                    }
+            VOLReader.Endianess = EndianType.BIG_ENDIAN;
+            for (int i = 0; i < Math.Min((VOLReader.BaseStream.Length / 0x800), 10000); i++) {
+                VOLReader.BaseStream.Seek(i * 0x800, SeekOrigin.Begin);
+                if (VOLReader.ReadUInt64() == TOC31MAGIC) {
+                    return i * 0x800;
                 }
             }
 
@@ -85,19 +81,18 @@ namespace GT4FS.Core {
 
         private void ReadEntryOffsets() {
             _offsets = new List<int>();
-            using (var fs = new FileStream(VolumePath, FileMode.Open, FileAccess.Read))
-            using (var reader = new EndianBinReader(fs, EndianType.LITTLE_ENDIAN)) {
-                reader.BaseStream.Seek(_baseOffset + 0x40, SeekOrigin.Begin);
-                var xorKey = 0x14ac327a;
-                for (int i = 0; i < _tocHeader.EntryCount + 1; i++) {
-                    var buffer = reader.ReadBytes(0x04);
-                    var offset = BitConverter.ToInt32(PS2Zip.XorEncript(buffer, BitConverter.GetBytes(xorKey * (i + 1))), 0);
-                    if (i == 0) {
-                        _firstBlockOffset = offset;
-                        continue;
-                    }
-                    _offsets.Add(offset);
+
+            VOLReader.Endianess = EndianType.LITTLE_ENDIAN;
+            VOLReader.BaseStream.Seek(_baseOffset + 0x40, SeekOrigin.Begin);
+            var xorKey = 0x14ac327a;
+            for (int i = 0; i < _tocHeader.EntryCount + 1; i++) {
+                var buffer = VOLReader.ReadBytes(0x04);
+                var offset = BitConverter.ToInt32(PS2Zip.XorEncript(buffer, BitConverter.GetBytes(xorKey * (i + 1))), 0);
+                if (i == 0) {
+                    _firstBlockOffset = offset;
+                    continue;
                 }
+                _offsets.Add(offset);
             }
 
 #if DEBUG
@@ -117,24 +112,19 @@ namespace GT4FS.Core {
 
         private void ReadBlocks() {
             Blocks = new List<(long Offset, int Length)>();
-            using (var fs = new FileStream(VolumePath, FileMode.Open, FileAccess.Read))
-            using (var reader = new EndianBinReader(fs, EndianType.LITTLE_ENDIAN)) {
-                _offsets.Aggregate(_firstBlockOffset, (acc, x) => {
-                    Blocks.Add((_baseOffset + acc, x - acc));
-                    return x;
-                });
-            }
+            _offsets.Aggregate(_firstBlockOffset, (acc, x) => {
+                Blocks.Add((_baseOffset + acc, x - acc));
+                return x;
+            });
         }
 
         public byte[] DecryptBlock(long offset, int length) {
-            using (var fs = new FileStream(VolumePath, FileMode.Open, FileAccess.Read))
-            using (var reader = new EndianBinReader(fs, EndianType.LITTLE_ENDIAN)) {
-                reader.BaseStream.Seek(offset, SeekOrigin.Begin);
-                using (var decompressStream = new MemoryStream()) {
-                    using (var decompressionStream = new DeflateStream(new MemoryStream(reader.ReadBytes(length)), CompressionMode.Decompress)) {
-                        decompressionStream.CopyTo(decompressStream);
-                        return PS2Zip.XorEncript(decompressStream.ToArray(), new byte[] { 0x55 });
-                    }
+            VOLReader.Endianess = EndianType.LITTLE_ENDIAN;
+            VOLReader.BaseStream.Seek(offset, SeekOrigin.Begin);
+            using (var decompressStream = new MemoryStream()) {
+                using (var decompressionStream = new DeflateStream(new MemoryStream(VOLReader.ReadBytes(length)), CompressionMode.Decompress)) {
+                    decompressionStream.CopyTo(decompressStream);
+                    return PS2Zip.XorEncript(decompressStream.ToArray(), new byte[] { 0x55 });
                 }
             }
         }
