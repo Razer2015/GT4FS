@@ -8,7 +8,7 @@
     <ProjectGuid>{420D5C9C-8A88-445C-B810-1B0CCA1FD34D}</ProjectGuid>
     <OutputType>Exe</OutputType>
     <RootNamespace>GT4FS.Tester</RootNamespace>
-    <AssemblyName>GT4FS.Tester</AssemblyName>
+    <AssemblyName>GT4FS</AssemblyName>
     <TargetFrameworkVersion>v4.7.2</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
     <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>

@@ -40,11 +40,24 @@ namespace GT4FS.Tester {
         }
 
         static void Main(string[] args) {
+            bool cmdWait = false;
+            if (args.Length <= 0) {
+                if (!PrintEasterEgg()) {
+                    return;
+                }
+                cmdWait = true;
+            }
+
             Parser.Default.ParseArguments<InfoOptions, ExtractOptions>(args)
                 .MapResult(
                 (InfoOptions opts) => RunInfoAndReturnExitCode(opts),
                 (ExtractOptions opts) => RunAndReturnExitCode(opts),
                 errs => 1);
+
+            if (cmdWait) {
+                Console.WriteLine("Press any key to exit...");
+                Console.ReadLine();
+            }
         }
 
         private static object RunInfoAndReturnExitCode(InfoOptions options) {
@@ -167,6 +180,31 @@ namespace GT4FS.Tester {
                 Console.WriteLine(ex);
                 return 1;
             }
+        }
+
+        private static bool PrintEasterEgg() {
+            string coolstory = @"New Team.
+New Rules.
+New Release-Platform.
+New Tools.
+
+
+GT4FS Extractor 2.0, by team eventHorizon";
+
+            Console.WriteLine(coolstory);
+            Console.Write("\nDo you agree? (y/n): ");
+            var input = Console.ReadLine();
+            if (input.Contains("y")) {
+                Console.Clear();
+                return true;
+            }
+            Console.Clear();
+
+            Console.WriteLine(@"Djinn:
+We have some unfinished business.");
+            Console.ReadLine();
+
+            return false;
         }
     }
 }

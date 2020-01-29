@@ -5,7 +5,7 @@ using System.Runtime.InteropServices;
 // General Information about an assembly is controlled through the following
 // set of attributes. Change these attribute values to modify the information
 // associated with an assembly.
-[assembly: AssemblyTitle("GT4FS.Tester")]
+[assembly: AssemblyTitle("GT4FS")]
 [assembly: AssemblyDescription("TOC 3.1 extractor by Team eventHorizon.")]
 [assembly: AssemblyConfiguration("")]
 [assembly: AssemblyCompany("eventHorizon")]
