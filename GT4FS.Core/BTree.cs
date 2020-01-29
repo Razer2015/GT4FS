@@ -7,6 +7,7 @@ using GT.Shared.Threading;
 using GT.Shared.Logging;
 using System.Diagnostics;
 using GT.Shared;
+using GT.Shared.Polyphony;
 
 namespace GT4FS.Core {
     public class BTree : IDisposable {
@@ -21,23 +22,21 @@ namespace GT4FS.Core {
             _queueWriter = logWriter != null ? new QueueWriter(logWriter) : null;
         }
 
-        public bool ExtractAllFiles(string outputPath, bool overwrite = false) {
+        public bool ExtractAllFiles(string outputPath, string volName = null, bool overwrite = false) {
             Directory.CreateDirectory(outputPath);
-            using (var sw = new StreamWriter(Path.Combine(outputPath, "extract.log"), true)) {
+            using (var sw = new StreamWriter(Path.Combine(outputPath, $"{(string.IsNullOrEmpty(volName) ? "" : $"{ volName }_")}extract.log"), true)) {
                 sw.WriteLine(string.Format("Extraction started: {0}", DateTime.Now.ToString()));
                 var stopwatch = new Stopwatch();
                 stopwatch.Start();
 
-                using (var fs = new FileStream(_volume.VolumePath, FileMode.Open, FileAccess.Read))
-                using (var reader = new EndianBinReader(fs)) {
-                    var files = GetAllFiles();
-                    foreach (var file in files) {
-                        var destPath = Path.Combine(outputPath, file.Path).Replace("/", "\\");
-                        if (ExtractFile(reader, file.Offset, file.PackedSize, file.RealSize, destPath, out var sourcePath, overwrite))
-                            sw.WriteLine(string.Format("Succesfully extracted: {0} to {1}", sourcePath, destPath));
-                        else
-                            sw.WriteLine(string.Format("Failed to extract: {0} to {1}", sourcePath, destPath));
-                    }
+                _volume.VOLReader.Endianess = EndianType.BIG_ENDIAN;
+                var files = GetAllFiles();
+                foreach (var file in files) {
+                    var destPath = Path.Combine(outputPath, file.Path).Replace("/", "\\");
+                    if (ExtractFile(_volume.VOLReader, file.Offset, file.PackedSize, file.RealSize, destPath, out var sourcePath, overwrite))
+                        sw.WriteLine(string.Format("Succesfully extracted: {0} to {1}", sourcePath, destPath));
+                    else
+                        sw.WriteLine(string.Format("Failed to extract: {0} to {1}", sourcePath, destPath));
                 }
 
                 _queueWriter?.Enqueue("All files extracted!");
@@ -57,12 +56,12 @@ namespace GT4FS.Core {
             return true;
         }
 
-        public bool WriteFileList(string outputPath, bool debugInfo = false) {
+        public bool WriteFileList(string outputPath, string volName = null, bool debugInfo = false) {
             if (_nodeEntries == null) {
                 Read();
             }
 
-            var path = Path.Combine(outputPath, $"filelist.txt");
+            var path = Path.Combine(outputPath, $"{(string.IsNullOrEmpty(volName) ? "" : $"{volName}_")}filelist.txt");
             Directory.CreateDirectory(outputPath);
             _queueWriter?.Enqueue("Writing file list...");
             using (var sw = new StreamWriter(path, false)) {
