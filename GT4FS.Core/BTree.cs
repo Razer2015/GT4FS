@@ -33,7 +33,7 @@ namespace GT4FS.Core {
                 var files = GetAllFiles();
                 foreach (var file in files) {
                     var destPath = Path.Combine(outputPath, file.Path).Replace("/", "\\");
-                    if (ExtractFile(_volume.VOLReader, file.Offset, file.PackedSize, file.RealSize, destPath, out var sourcePath, overwrite))
+                    if (ExtractFile(_volume.VOLReader, file.Offset, file.PackedSize, file.RealSize, file.ModifiedDate, destPath, out var sourcePath, overwrite))
                         sw.WriteLine(string.Format("Succesfully extracted: {0} to {1}", sourcePath, destPath));
                     else
                         sw.WriteLine(string.Format("Failed to extract: {0} to {1}", sourcePath, destPath));
@@ -100,10 +100,10 @@ namespace GT4FS.Core {
                     case 0x01: // File
                     case 0x02: // Compressed file
                         if (nodes.Count() - 1 > i) {
-                            sw?.WriteLine($"{string.Join("", prefixFolders)}├── {node.Name}{(debugInfo ? $" (Offset: 0x{_volume.GetFileOffset(node.PageOffset).ToString("X8")} - Size: 0x{node.PackedSize.ToString("X8")} - RealSize: 0x{node.RealSize.ToString("X8")} - Unk: 0x{node.Unk.ToString("X8")})" : "")}");
+                            sw?.WriteLine($"{string.Join("", prefixFolders)}├── {node.Name}{(debugInfo ? $" (Offset: 0x{_volume.GetFileOffset(node.PageOffset).ToString("X8")} - Size: 0x{node.PackedSize.ToString("X8")} - RealSize: 0x{node.RealSize.ToString("X8")} - ModifiedDate: {node.ModifiedDate.ToString("s")})" : "")}");
                         }
                         else {
-                            sw?.WriteLine($"{string.Join("", prefixFolders)}└── {node.Name}{(debugInfo ? $" (Offset: 0x{_volume.GetFileOffset(node.PageOffset).ToString("X8")} - Size: 0x{node.PackedSize.ToString("X8")} - RealSize: 0x{node.RealSize.ToString("X8")} - Unk: 0x{node.Unk.ToString("X8")})" : "")}");
+                            sw?.WriteLine($"{string.Join("", prefixFolders)}└── {node.Name}{(debugInfo ? $" (Offset: 0x{_volume.GetFileOffset(node.PageOffset).ToString("X8")} - Size: 0x{node.PackedSize.ToString("X8")} - RealSize: 0x{node.RealSize.ToString("X8")} - ModifiedDate: {node.ModifiedDate.ToString("s")})" : "")}");
                         }
                         break;
                     default:
@@ -121,13 +121,13 @@ namespace GT4FS.Core {
             _nodeEntries = Nodes.Where(x => x.Flag == 0).SelectMany(x => x.NodeEntries);
         }
 
-        private List<(string Path, long Offset, uint PackedSize, uint RealSize)> GetAllFiles() {
+        private List<(string Path, long Offset, uint PackedSize, uint RealSize, DateTime ModifiedDate)> GetAllFiles() {
             if (_nodeEntries == null) {
                 Read();
             }
-            var files = new List<(string Path, long Offset, uint PackedSize, uint RealSize)>();
+            var files = new List<(string Path, long Offset, uint PackedSize, uint RealSize, DateTime ModifiedDate)>();
             foreach (var nodeEntry in _nodeEntries.Where(x => x.Flag != 0)) {
-                files.Add((BuildPath(nodeEntry), _volume.GetFileOffset(nodeEntry.PageOffset), nodeEntry.PackedSize, nodeEntry.RealSize));
+                files.Add((BuildPath(nodeEntry), _volume.GetFileOffset(nodeEntry.PageOffset), nodeEntry.PackedSize, nodeEntry.RealSize, nodeEntry.ModifiedDate));
             }
 
             return files;
@@ -140,7 +140,7 @@ namespace GT4FS.Core {
             return Path.Combine(BuildPath(_nodeEntries.FirstOrDefault(x => x.NodeID == nodeEntry.ParentNode)), nodeEntry.Name);
         }
 
-        private bool ExtractFile(EndianBinReader reader, long offset, uint packedSize, uint realSize, string destPath, out string sourcePath, bool overWrite) {
+        private bool ExtractFile(EndianBinReader reader, long offset, uint packedSize, uint realSize, DateTime modifiedDate, string destPath, out string sourcePath, bool overWrite) {
             sourcePath = $"VOL offset {offset.ToString("X8")} - size {packedSize.ToString("X8")}";
             try {
                 if (File.Exists(destPath) && !overWrite) {
@@ -155,8 +155,9 @@ namespace GT4FS.Core {
                 Debug.Assert(data.Length == realSize);
 
                 File.WriteAllBytes(destPath, data);
+                File.SetLastWriteTimeUtc(destPath, modifiedDate);
 
-                _queueWriter?.Enqueue($"Extacted: {destPath}");
+                _queueWriter?.Enqueue($"Extracted: {destPath}");
 
                 return true;
             }
