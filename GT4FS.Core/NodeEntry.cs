@@ -9,7 +9,7 @@ namespace GT4FS.Core {
         public byte Flag { get; set; } // 0 = Dir, 1 = File, 2 = Compressed file
         public ushort NodeID { get; set; }
         public uint PageOffset { get; set; }
-        public uint Unk { get; set; }
+        public DateTime ModifiedDate { get; set; }
         public uint PackedSize { get; set; }
         public uint RealSize { get; set; }
 
@@ -25,14 +25,14 @@ namespace GT4FS.Core {
                     break;
                 case 0x01:
                     PageOffset = reader.ReadUInt32();
-                    Unk = reader.ReadUInt32();
+                    ModifiedDate = DateTimeOffset.FromUnixTimeSeconds(reader.ReadUInt32()).UtcDateTime;
                     PackedSize = reader.ReadUInt32();
                     RealSize = PackedSize;
                     reader.BaseStream.Position += 3;
                     break;
                 case 0x02:
                     PageOffset = reader.ReadUInt32();
-                    Unk = reader.ReadUInt32();
+                    ModifiedDate = DateTimeOffset.FromUnixTimeSeconds(reader.ReadUInt32()).UtcDateTime;
                     PackedSize = reader.ReadUInt32();
                     RealSize = reader.ReadUInt32();
                     reader.BaseStream.Position += 3;
