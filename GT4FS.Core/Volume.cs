@@ -1,5 +1,4 @@
-﻿using GT.Shared;
-using GT.Shared.Polyphony;
+﻿using GT.Shared.Polyphony;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -148,7 +147,7 @@ namespace GT4FS.Core {
 
                         using (var ms2 = new MemoryStream(buffer))
                         using (var reader = new EndianBinReader(ms2, EndianType.LITTLE_ENDIAN)) {
-                            sw.WriteLine($"{index,4} - {reader.ReadInt16().ToString("X4")} {reader.ReadInt16().ToString("X4")} {reader.ReadInt32().ToString("X8")} {reader.ReadInt32().ToString("X8")} {reader.ReadInt32().ToString("X8")}");
+                            sw.WriteLine($"{index,4} - {reader.ReadInt16():X4} {reader.ReadInt16():X4} {reader.ReadInt32():X8} {reader.ReadInt32():X8} {reader.ReadInt32():X8}");
                         }
 
                         //File.WriteAllBytes($"blocks\\block_{index}.bin", buffer);

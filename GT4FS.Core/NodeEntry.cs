@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.Text;
 
 namespace GT4FS.Core {
@@ -7,7 +6,7 @@ namespace GT4FS.Core {
         public int ParentNode { get; set; }
         public string Name { get; set; }
         public byte Flag { get; set; } // 0 = Dir, 1 = File, 2 = Compressed file
-        public ushort NodeID { get; set; }
+        public ushort NodeId { get; set; }
         public uint PageOffset { get; set; }
         public DateTime ModifiedDate { get; set; }
         public uint PackedSize { get; set; }
@@ -20,7 +19,7 @@ namespace GT4FS.Core {
 
             switch (Flag) {
                 case 0x00:
-                    NodeID = reader.ReadUInt16();
+                    NodeId = reader.ReadUInt16();
                     reader.BaseStream.Position += 5;
                     break;
                 case 0x01:
@@ -42,7 +41,7 @@ namespace GT4FS.Core {
             }
         }
 
-        private string ReadName(EndianBinReader reader) {
+        private static string ReadName(EndianBinReader reader) {
             var sb = new StringBuilder();
             do {
                 sb.Append(Encoding.UTF8.GetString(reader.ReadBytes(0x04)));

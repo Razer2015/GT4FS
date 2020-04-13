@@ -1,8 +1,6 @@
 ﻿using GT.Shared.Polyphony;
-using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Text;
 
 namespace GT4FS.Core {
     public class Node {
@@ -28,10 +26,9 @@ namespace GT4FS.Core {
                 NextPage = reader.ReadInt32();
                 PreviousPage = reader.ReadInt32();
 
-                if (Flag == 0) {
-                    for (int i = 0; i < EntryCount / 2; i++) {
-                        NodeEntries.Add(new NodeEntry(reader));
-                    }
+                if (Flag != 0) return;
+                for (var i = 0; i < EntryCount / 2; i++) {
+                    NodeEntries.Add(new NodeEntry(reader));
                 }
             }
         }

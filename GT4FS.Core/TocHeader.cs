@@ -14,7 +14,7 @@ namespace GT4FS.Core {
         public TocHeader(EndianBinReader reader, long baseOffset) {
             reader.BaseStream.Seek(baseOffset, SeekOrigin.Begin);
             Magic = reader.ReadBytes(0x04);
-            if ((Magic[0] != 0xAD) || (Magic[1] != 0x90) || (Magic[2] != 0xB9) || (Magic[3] != 0xAC))
+            if (Magic[0] != 0xAD || Magic[1] != 0x90 || Magic[2] != 0xB9 || Magic[3] != 0xAC)
                 throw new Exception("Why are you trying to extract a VOL that's not meant to be extracted with this tool? Dummy!");
 
             Version = reader.ReadInt32();

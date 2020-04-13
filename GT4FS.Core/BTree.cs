@@ -1,11 +1,11 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Text;
 using System.Linq;
 using System.IO;
 using GT.Shared.Threading;
 using GT.Shared.Logging;
 using System.Diagnostics;
+using System.Globalization;
 using GT.Shared;
 using GT.Shared.Polyphony;
 
@@ -25,7 +25,7 @@ namespace GT4FS.Core {
         public bool ExtractAllFiles(string outputPath, string volName = null, bool overwrite = false) {
             Directory.CreateDirectory(outputPath);
             using (var sw = new StreamWriter(Path.Combine(outputPath, $"{(string.IsNullOrEmpty(volName) ? "" : $"{ volName }_")}extract.log"), true)) {
-                sw.WriteLine(string.Format("Extraction started: {0}", DateTime.Now.ToString()));
+                sw.WriteLine($"Extraction started: {DateTime.Now.ToString(CultureInfo.InvariantCulture)}");
                 var stopwatch = new Stopwatch();
                 stopwatch.Start();
 
@@ -34,9 +34,9 @@ namespace GT4FS.Core {
                 foreach (var file in files) {
                     var destPath = Path.Combine(outputPath, file.Path).Replace("/", "\\");
                     if (ExtractFile(_volume.VOLReader, file.Offset, file.PackedSize, file.RealSize, file.ModifiedDate, destPath, out var sourcePath, overwrite))
-                        sw.WriteLine(string.Format("Succesfully extracted: {0} to {1}", sourcePath, destPath));
+                        sw.WriteLine($"Successfully extracted: {sourcePath} to {destPath}");
                     else
-                        sw.WriteLine(string.Format("Failed to extract: {0} to {1}", sourcePath, destPath));
+                        sw.WriteLine($"Failed to extract: {sourcePath} to {destPath}");
                 }
 
                 _queueWriter?.Enqueue("All files extracted!");
@@ -46,9 +46,7 @@ namespace GT4FS.Core {
                 TimeSpan ts = stopwatch.Elapsed;
 
                 // Format and display the TimeSpan value.
-                string elapsedTime = string.Format("{0:00}:{1:00}:{2:00}.{3:00}",
-                    ts.Hours, ts.Minutes, ts.Seconds,
-                    ts.Milliseconds / 10);
+                string elapsedTime = $"{ts.Hours:00}:{ts.Minutes:00}:{ts.Seconds:00}.{ts.Milliseconds / 10:00}";
                 sw.WriteLine("Time elapsed for extraction: " + elapsedTime);
                 sw.WriteLine(string.Empty);
             }
@@ -95,15 +93,15 @@ namespace GT4FS.Core {
                             sw?.WriteLine($"{string.Join("", prefixFolders)}└── {node.Name}");
                             folders.Add("    ");
                         }
-                        TraverseNodes(nodeEntries, sw, node.NodeID, depth++, folders, debugInfo);
+                        TraverseNodes(nodeEntries, sw, node.NodeId, depth++, folders, debugInfo);
                         break;
                     case 0x01: // File
                     case 0x02: // Compressed file
                         if (nodes.Count() - 1 > i) {
-                            sw?.WriteLine($"{string.Join("", prefixFolders)}├── {node.Name}{(debugInfo ? $" (Offset: 0x{_volume.GetFileOffset(node.PageOffset).ToString("X8")} - Size: 0x{node.PackedSize.ToString("X8")} - RealSize: 0x{node.RealSize.ToString("X8")} - ModifiedDate: {node.ModifiedDate.ToString("s")})" : "")}");
+                            sw?.WriteLine($"{string.Join("", prefixFolders)}├── {node.Name}{(debugInfo ? $" (Offset: 0x{_volume.GetFileOffset(node.PageOffset):X8} - Size: 0x{node.PackedSize:X8} - RealSize: 0x{node.RealSize:X8} - ModifiedDate: {node.ModifiedDate:s})" : "")}");
                         }
                         else {
-                            sw?.WriteLine($"{string.Join("", prefixFolders)}└── {node.Name}{(debugInfo ? $" (Offset: 0x{_volume.GetFileOffset(node.PageOffset).ToString("X8")} - Size: 0x{node.PackedSize.ToString("X8")} - RealSize: 0x{node.RealSize.ToString("X8")} - ModifiedDate: {node.ModifiedDate.ToString("s")})" : "")}");
+                            sw?.WriteLine($"{string.Join("", prefixFolders)}└── {node.Name}{(debugInfo ? $" (Offset: 0x{_volume.GetFileOffset(node.PageOffset):X8} - Size: 0x{node.PackedSize:X8} - RealSize: 0x{node.RealSize:X8} - ModifiedDate: {node.ModifiedDate:s})" : "")}");
                         }
                         break;
                     default:
@@ -134,19 +132,16 @@ namespace GT4FS.Core {
         }
 
         private string BuildPath(NodeEntry nodeEntry) {
-            if (nodeEntry.ParentNode == 0) {
-                return string.Empty;
-            }
-            return Path.Combine(BuildPath(_nodeEntries.FirstOrDefault(x => x.NodeID == nodeEntry.ParentNode)), nodeEntry.Name);
+            return nodeEntry.ParentNode == 0 ? string.Empty : Path.Combine(BuildPath(_nodeEntries.FirstOrDefault(x => x.NodeId == nodeEntry.ParentNode)), nodeEntry.Name);
         }
 
         private bool ExtractFile(EndianBinReader reader, long offset, uint packedSize, uint realSize, DateTime modifiedDate, string destPath, out string sourcePath, bool overWrite) {
-            sourcePath = $"VOL offset {offset.ToString("X8")} - size {packedSize.ToString("X8")}";
+            sourcePath = $"VOL offset {offset:X8} - size {packedSize:X8}";
             try {
                 if (File.Exists(destPath) && !overWrite) {
                     return true;
                 }
-                Directory.CreateDirectory(Path.GetDirectoryName(destPath));
+                Directory.CreateDirectory(Path.GetDirectoryName(destPath) ?? throw new InvalidOperationException());
                 reader.BaseStream.Position = offset;
                 var data = reader.ReadBytes((int)packedSize);
                 if (Util.DataAtUInt32(data, 0) == 0xC5EEF7FFu)
