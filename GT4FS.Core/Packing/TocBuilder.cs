@@ -11,7 +11,7 @@ namespace GT4FS.Core.Packing
 {
     public class TocBuilder
     {
-        public const int BlockHeaderSize = 0x08;
+        public const int BlockHeaderSize = 0x0C;
 
         /// <summary>
         /// Size of each block. Defaults to 0x800.
@@ -24,7 +24,7 @@ namespace GT4FS.Core.Packing
         public DirEntry RootTree { get; set; }
 
         // In-one-go entries of the whole file system for writing later on.
-        private List<Entry> _entries;
+        private List<Entry> _entries = new List<Entry>();
 
         // To keep track of which entry is currently being saved
         private int _currentEntry = 0;
@@ -43,8 +43,18 @@ namespace GT4FS.Core.Packing
         public void RegisterFilesToPack(string mainFolder, bool useCache)
         {
             Console.WriteLine("[*] Indexing folder to prepare to pack..");
+
+            RootTree = new DirEntry(".");
+            RootTree.NodeID = CurrentID++;
+
+            _entries.Add(RootTree);
+
             Import(RootTree, mainFolder);
+            TraverseBuildEntryPackList(RootTree);
             Console.WriteLine("[*] Done.");
+
+            
+            Build("test.bin");
         }
 
         /// <summary>
@@ -73,7 +83,7 @@ namespace GT4FS.Core.Packing
             volStream.WriteInt32(TocHeader.Version3_1);
 
             // Skip the block toc as it can't be written for now
-            volStream.BaseStream.Position = TocHeader.HeaderSize;
+            volStream.BaseStream.Position = 0x800 + TocHeader.HeaderSize;
 
             // Write all the data blocks.
             WriteDataBlocks();
@@ -99,7 +109,7 @@ namespace GT4FS.Core.Packing
 
                 Entry entry = _entries[_currentEntry];
                 int entrySize = entry.GetTotalSize(blockWriter.Position);
-                if (entrySize < blockSpaceLeft)
+                if (entrySize > blockSpaceLeft)
                     break; // Predicted exceeded block bound, finish it up
 
                 if (entriesWriten == 0)
@@ -116,27 +126,30 @@ namespace GT4FS.Core.Packing
                 // Write type specific
                 int entryMetaOffset = blockWriter.Position;
                 entry.SerializeTypeMeta(ref blockWriter);
+                blockWriter.Align(0x04); // Whole entry is also aligned
+
 
                 int endPos = blockWriter.Position;
 
                 blockSpaceLeft -= entrySize + 0x08; // Include the block's toc entry
 
                 // Write the lookup information at the end of the block
-                blockWriter.Position = BlockSize - (entriesWriten * 0x08);
+                blockWriter.Position = BlockSize - ((entriesWriten+1) * 0x08);
                 blockWriter.WriteUInt16((ushort)entryOffset);
-                blockWriter.WriteUInt16((ushort)(entry.Name.Length + 4));
+                blockWriter.WriteUInt16((ushort)entry.GetEntryMetaSize());
                 blockWriter.WriteUInt16((ushort)entryMetaOffset);
-                blockWriter.WriteUInt16(entry.GetMetaSize());
-                blockWriter.Align(0x04); // Whole entry is also aligned
-
-
+                blockWriter.WriteUInt16(entry.GetTypeMetaSize());
+                
                 // Move on to next.
                 entriesWriten++;
+                _currentEntry++;
+
                 blockWriter.Position = endPos;
             }
 
             // Write up the block info - write what we can write - the entry count
-            blockWriter.Position = 0x04;
+            blockWriter.Position = 0;
+            blockWriter.WriteInt16(0); // Block Type
             blockWriter.WriteUInt16(entriesWriten);
 
             return buffer;
@@ -186,27 +199,22 @@ namespace GT4FS.Core.Packing
                 entry.ParentNode = parent.NodeID;
                 parent.ChildEntries.Add(entry);
             }
-
-            _entries = TraverseBuildEntryPackList(RootTree);
         }
 
         /// <summary>
         /// Builds the 2D representation of the file system, for packing.
         /// </summary>
         /// <param name="parentDir"></param>
-        private List<Entry> TraverseBuildEntryPackList(DirEntry parentDir)
+        private void TraverseBuildEntryPackList(DirEntry parentDir)
         {
-            var entries = new List<Entry>();
-            foreach (var entry in RootTree.ChildEntries)
-                entries.Add(entry);
+            foreach (var entry in parentDir.ChildEntries)
+                _entries.Add(entry);
 
-            foreach (var entry in RootTree.ChildEntries)
+            foreach (var entry in parentDir.ChildEntries)
             {
                 if (entry is DirEntry childDir)
                     TraverseBuildEntryPackList(childDir);
             }
-
-            return entries;
         }
 
         private string[] ReadCache(string cacheFile)

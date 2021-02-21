@@ -21,8 +21,11 @@ namespace GT4FS.Core.Packing
 
         public int NodeID { get; set; }
 
-        public abstract ushort GetMetaSize();
+        public abstract ushort GetTypeMetaSize();
         public abstract void SerializeTypeMeta(ref SpanWriter writer);
+
+        public int GetEntryMetaSize()
+            => sizeof(int) + Encoding.UTF8.GetByteCount(Name); //  ParentNode + Name Len
 
         public ushort GetTotalSize(int baseOffset)
         {
@@ -31,7 +34,7 @@ namespace GT4FS.Core.Packing
             newOffset += Encoding.UTF8.GetByteCount(Name); // Name Len
 
             newOffset += Utils.Align(newOffset, Alignment) - newOffset;
-            newOffset += GetMetaSize(); // Type Metadata
+            newOffset += GetTypeMetaSize(); // Type Metadata
 
             // Whole thing is also aligned
             newOffset += Utils.Align(newOffset, Alignment) - newOffset;
