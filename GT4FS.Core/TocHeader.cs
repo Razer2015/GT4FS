@@ -1,23 +1,31 @@
 ﻿using System;
 using System.IO;
 
+using Syroot.BinaryData;
+
 namespace GT4FS.Core {
-    public struct TocHeader {
-        public byte[] Magic { get; set; }
-        public int Version { get; set; }
+    public struct TocHeader
+    {
+        public const int HeaderSize = 0x40;
+        public const string Magic = "RoFS";
+        public const int MagicValue = -0x526f4654; // RoFT.. SoFS.. Which one?
+        public const int Version3_1 = 0x00_03_00_01;
+
+        public uint Version { get; set; }
+
         public int Length { get; set; }
         public int PageCount { get; set; }
         public ushort PageLength { get; set; }
         public ushort EntryCount { get; set; }
         public long DataOffset { get; set; }
 
-        public TocHeader(EndianBinReader reader, long baseOffset) {
+        public TocHeader(BinaryStream reader, long baseOffset)
+        {
             reader.BaseStream.Seek(baseOffset, SeekOrigin.Begin);
-            Magic = reader.ReadBytes(0x04);
-            if (Magic[0] != 0xAD || Magic[1] != 0x90 || Magic[2] != 0xB9 || Magic[3] != 0xAC)
+            if (reader.ReadInt32(ByteConverter.Big) != MagicValue)
                 throw new Exception("Why are you trying to extract a VOL that's not meant to be extracted with this tool? Dummy!");
 
-            Version = reader.ReadInt32();
+            Version = reader.ReadUInt32();
             Length = reader.ReadInt32();
             PageCount = reader.ReadInt32();
             PageLength = reader.ReadUInt16();
@@ -25,14 +33,17 @@ namespace GT4FS.Core {
             DataOffset = (baseOffset + PageCount * PageLength);
         }
 
-        public void Write(EndianBinWriter writer) {
-            writer.Write(Magic);
-            writer.Write(Version);
-            writer.Write(Length);
-            writer.Write(PageCount);
-            writer.Write(PageLength);
-            writer.Write(EntryCount);
-            writer.Seek(0x40, SeekOrigin.Begin);
+        public void Write(BinaryStream writer)
+        {
+            writer.WriteInt32(MagicValue, ByteConverter.Big);
+            writer.WriteUInt32(Version);
+
+            writer.WriteInt32(Length);
+            writer.WriteInt32(PageCount);
+            writer.WriteUInt16(PageLength);
+            writer.WriteUInt16(EntryCount);
+
+            writer.Seek(HeaderSize, SeekOrigin.Begin);
         }
     }
 }

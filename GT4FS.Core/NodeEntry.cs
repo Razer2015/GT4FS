@@ -1,54 +1,75 @@
 ﻿using System;
 using System.Text;
 
-namespace GT4FS.Core {
-    public class NodeEntry {
+using Syroot.BinaryData;
+
+namespace GT4FS.Core 
+{
+    public class NodeEntry
+    {
         public int ParentNode { get; set; }
         public string Name { get; set; }
-        public byte Flag { get; set; } // 0 = Dir, 1 = File, 2 = Compressed file
-        public ushort NodeId { get; set; }
+        public VolumeEntryType Flag { get; set; }
+        public uint NodeId { get; set; }
         public uint PageOffset { get; set; }
         public DateTime ModifiedDate { get; set; }
         public uint PackedSize { get; set; }
         public uint RealSize { get; set; }
 
-        public NodeEntry(EndianBinReader reader) {
-            ParentNode = reader.ReadInt32(GT.Shared.Polyphony.EndianType.BIG_ENDIAN); // This is big endian?
+        public NodeEntry(BinaryStream reader)
+        {
+            ParentNode = reader.ReadInt32(ByteConverter.Big); // This is big endian?
             Name = ReadName(reader);
-            Flag = reader.ReadByte();
+            Flag = (VolumeEntryType)reader.Read1Byte();
 
-            switch (Flag) {
-                case 0x00:
-                    NodeId = reader.ReadUInt16();
-                    reader.BaseStream.Position += 5;
+            switch (Flag)
+            {
+                case VolumeEntryType.Directory:
+                    NodeId = reader.ReadUInt32();
                     break;
-                case 0x01:
+                case VolumeEntryType.File:
                     PageOffset = reader.ReadUInt32();
-                    ModifiedDate = DateTimeOffset.FromUnixTimeSeconds(reader.ReadUInt32()).UtcDateTime;
+                    ModifiedDate = reader.ReadDateTime(DateTimeCoding.CTime);
                     PackedSize = reader.ReadUInt32();
                     RealSize = PackedSize;
-                    reader.BaseStream.Position += 3;
                     break;
-                case 0x02:
+                case VolumeEntryType.CompressedFile:
                     PageOffset = reader.ReadUInt32();
-                    ModifiedDate = DateTimeOffset.FromUnixTimeSeconds(reader.ReadUInt32()).UtcDateTime;
+                    ModifiedDate = reader.ReadDateTime(DateTimeCoding.CTime);
                     PackedSize = reader.ReadUInt32();
                     RealSize = reader.ReadUInt32();
-                    reader.BaseStream.Position += 3;
                     break;
                 default:
                     throw new ArgumentOutOfRangeException($"Unknown flag {Flag}");
             }
+
+            reader.Align(0x04);
         }
 
-        private static string ReadName(EndianBinReader reader) {
+        private static string ReadName(BinaryStream reader)
+        {
             var sb = new StringBuilder();
-            do {
-                sb.Append(Encoding.UTF8.GetString(reader.ReadBytes(0x04)));
-            }
-            while (((reader.PeekChar() >> 2) & 0xFF) > 0);
 
-            return sb.ToString().TrimEnd('\0');
+            // TODO: actually use the block's toc for this..
+            while (true)
+            {
+                char c = (char)reader.Read1Byte();
+                if ((byte)c <= 2)
+                    break;
+                sb.Append(c);
+            }
+
+            reader.BaseStream.Position--;
+            reader.Align(0x04);
+
+            return sb.ToString();
         }
+    }
+
+    public enum VolumeEntryType : byte
+    {
+        Directory,
+        File,
+        CompressedFile
     }
 }

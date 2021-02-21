@@ -7,10 +7,15 @@ using GT4FS.Core;
 using System;
 using System.IO;
 
-namespace GT4FS.Tester {
-    class Program {
+using GT4FS.Core.Packing;
+
+namespace GT4FS.Tester
+{
+    class Program
+    {
         [Verb("info", HelpText = "Print out information.")]
-        class InfoOptions {
+        class InfoOptions
+        {
             [Option('r', "read", Required = true, HelpText = "Input file to be processed (GT.VOL file).")]
             public string Input { get; set; }
 
@@ -25,7 +30,8 @@ namespace GT4FS.Tester {
         }
 
         [Verb("extract", HelpText = "Extract the GT4, GTHD, TT game content.")]
-        class ExtractOptions {
+        class ExtractOptions
+        {
             [Option('r', "read", Required = true, HelpText = "Input file to be processed (GT.VOL file).")]
             public string Input { get; set; }
 
@@ -39,49 +45,75 @@ namespace GT4FS.Tester {
             public bool Verbose { get; set; }
         }
 
-        static void Main(string[] args) {
+        [Verb("pack", HelpText = "Pack GT4, GTHD, TT game content.")]
+        class PackOptions
+        {
+            [Option('r', "read", Required = true, HelpText = "Input folder to be processed (folder to pack).")]
+            public string Input { get; set; }
+
+            [Option('o', "output", Required = false, HelpText = "File to pack to (Default: GTNew.VOL).")]
+            public string Output { get; set; } = "GTNew.VOL";
+
+            [Option('c', "cache", Required = false, HelpText = "Use cache.")]
+            public bool Cache { get; set; }
+        }
+
+        static void Main(string[] args)
+        {
             bool cmdWait = false;
-            if (args.Length <= 0) {
-                if (!PrintEasterEgg()) {
+            if (args.Length <= 0)
+            {
+                if (!PrintEasterEgg())
                     return;
-                }
+
                 cmdWait = true;
             }
 
-            Parser.Default.ParseArguments<InfoOptions, ExtractOptions>(args)
+            Parser.Default.ParseArguments<InfoOptions, ExtractOptions, PackOptions>(args)
                 .MapResult(
                 (InfoOptions opts) => RunInfoAndReturnExitCode(opts),
                 (ExtractOptions opts) => RunAndReturnExitCode(opts),
+                (PackOptions opts) => RunPackAndReturnExitCode(opts),
                 errs => 1);
 
-            if (cmdWait) {
+            if (cmdWait)
+            {
                 Console.WriteLine("Press any key to exit...");
                 Console.ReadLine();
             }
         }
 
-        private static object RunInfoAndReturnExitCode(InfoOptions options) {
-            try {
+        private static object RunInfoAndReturnExitCode(InfoOptions options)
+        {
+            try
+            {
                 var fileLoader = new FileLoader(options.Input);
                 var fileType = fileLoader.GetFileType();
 
-                switch (fileType) {
+                switch (fileType)
+                {
                     case FileType.TOC31_VOL:
                     case FileType.TOC31_ISO:
-                        foreach (var (stream, fileName) in fileLoader.GetStreams()) {
-                            using (stream) {
+                        foreach (var (stream, fileName) in fileLoader.GetStreams())
+                        {
+                            using (stream)
+                            {
                                 var volume = new Volume(stream);
                                 volume.ReadVolume();
                                 var logWriter = options.Verbose ? new ConsoleWriter() : null;
-                                using (var btree = new BTree(volume, logWriter)) {
+                                using (var btree = new BTree(volume, logWriter))
+                                {
                                     // Output check
-                                    if (string.IsNullOrEmpty(options.Output)) {
+                                    if (string.IsNullOrEmpty(options.Output))
+                                    {
                                         FileAttributes attr = File.GetAttributes(options.Input);
-                                        if ((attr & FileAttributes.Directory) == FileAttributes.Directory) {
+                                        if ((attr & FileAttributes.Directory) == FileAttributes.Directory)
+                                        {
                                             DirectoryInfo parentDir = Directory.GetParent(options.Input);
                                             options.Output = Path.Combine(parentDir.FullName, "information");
                                         }
-                                        else {
+                                        else
+                                        {
                                             var folder = Path.GetDirectoryName(options.Input);
                                             options.Output = Path.Combine(folder, "information");
                                         }
@@ -107,42 +139,54 @@ namespace GT4FS.Tester {
                         return 0;
                 }
             }
-            catch (ArgumentException aex) {
+            catch (ArgumentException aex)
+            {
                 Console.WriteLine(aex.Message);
                 return 1;
             }
-            catch (InvalidFileSystemException fsex) {
+            catch (InvalidFileSystemException fsex)
+            {
                 Console.WriteLine(fsex.Message);
                 return 1;
             }
-            catch (Exception ex) {
+            catch (Exception ex)
+            {
                 Console.WriteLine(ex);
                 return 1;
             }
         }
 
-        private static object RunAndReturnExitCode(ExtractOptions options) {
-            try {
+        private static object RunAndReturnExitCode(ExtractOptions options)
+        {
+            try
+            {
                 var fileLoader = new FileLoader(options.Input);
                 var fileType = fileLoader.GetFileType();
 
-                switch (fileType) {
+                switch (fileType)
+                {
                     case FileType.TOC31_VOL:
                     case FileType.TOC31_ISO:
-                        foreach (var (stream, fileName) in fileLoader.GetStreams()) {
-                            using (stream) {
+                        foreach (var (stream, fileName) in fileLoader.GetStreams())
+                        {
+                            using (stream)
+                            {
                                 var volume = new Volume(stream);
                                 volume.ReadVolume();
                                 var logWriter = options.Verbose ? new ConsoleWriter() : null;
-                                using (var btree = new BTree(volume, logWriter)) {
+                                using (var btree = new BTree(volume, logWriter))
+                                {
                                     // Output check
-                                    if (string.IsNullOrEmpty(options.Output)) {
+                                    if (string.IsNullOrEmpty(options.Output))
+                                    {
                                         FileAttributes attr = File.GetAttributes(options.Input);
-                                        if ((attr & FileAttributes.Directory) == FileAttributes.Directory) {
+                                        if ((attr & FileAttributes.Directory) == FileAttributes.Directory)
+                                        {
                                             DirectoryInfo parentDir = Directory.GetParent(options.Input);
                                             options.Output = Path.Combine(parentDir.FullName, "extracted");
                                         }
-                                        else {
+                                        else
+                                        {
                                             var folder = Path.GetDirectoryName(options.Input);
                                             options.Output = Path.Combine(folder, "extracted");
                                         }
@@ -168,21 +212,33 @@ namespace GT4FS.Tester {
                         return 0;
                 }
             }
-            catch (ArgumentException aex) {
+            catch (ArgumentException aex)
+            {
                 Console.WriteLine(aex.Message);
                 return 1;
             }
-            catch (InvalidFileSystemException fsex) {
+            catch (InvalidFileSystemException fsex)
+            {
                 Console.WriteLine(fsex.Message);
                 return 1;
             }
-            catch (Exception ex) {
+            catch (Exception ex)
+            {
                 Console.WriteLine(ex);
                 return 1;
             }
         }
 
-        private static bool PrintEasterEgg() {
+        private static object RunPackAndReturnExitCode(PackOptions options)
+        {
+            var tocBuilder = new TocBuilder();
+            tocBuilder.RegisterFilesToPack(options.Input, options.Cache);
+
+            return 0;
+        }
+
+        private static bool PrintEasterEgg()
+        {
             string coolstory = @"New Team.
 New Rules.
 New Release-Platform.
@@ -194,7 +250,8 @@ GT4FS Extractor 2.0, by team eventHorizon";
             Console.WriteLine(coolstory);
             Console.Write("\nDo you agree? (y/n): ");
             var input = Console.ReadLine();
-            if (input.Contains("y")) {
+            if (input.Contains("y"))
+            {
                 Console.Clear();
                 return true;
             }

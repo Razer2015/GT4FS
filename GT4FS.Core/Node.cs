@@ -2,6 +2,8 @@
 using System.Collections.Generic;
 using System.IO;
 
+using Syroot.BinaryData;
+
 namespace GT4FS.Core {
     public class Node {
         public short Flag { get; set; }
@@ -18,18 +20,21 @@ namespace GT4FS.Core {
             Read();
         }
 
-        public void Read() {
+        public void Read()
+        {
             using (var ms = new MemoryStream(_data))
-            using (var reader = new EndianBinReader(ms, EndianType.LITTLE_ENDIAN)) {
+            using (var reader = new BinaryStream(ms))
+            {
                 Flag = reader.ReadInt16();
                 EntryCount = reader.ReadInt16();
                 NextPage = reader.ReadInt32();
                 PreviousPage = reader.ReadInt32();
 
-                if (Flag != 0) return;
-                for (var i = 0; i < EntryCount / 2; i++) {
+                if (Flag != 0) 
+                    return;
+
+                for (var i = 0; i < EntryCount / 2; i++)
                     NodeEntries.Add(new NodeEntry(reader));
-                }
             }
         }
     }
