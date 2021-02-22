@@ -63,15 +63,15 @@ namespace GT4FS.Core.Packing
         /// Builds the volume.
         /// </summary>
         /// <param name="outputFile"></param>
-        public void Build(string outputFile)
+        public void Build(string outputFile, int baseRealTocOffset)
         {
             using (var fs = new FileStream(outputFile, FileMode.Create))
             using (var volStream = new BinaryStream(fs))
             {
                 // Write fake TOC
-                volStream.BaseStream.Seek(0x800);
+                volStream.BaseStream.Seek(baseRealTocOffset);
 
-                BuildRealTOC(volStream);
+                BuildRealTOC(volStream, baseRealTocOffset);
             }
         }
 
@@ -79,13 +79,13 @@ namespace GT4FS.Core.Packing
         /// Builds the real table of contents.
         /// </summary>
         /// <param name="volStream"></param>
-        private void BuildRealTOC(BinaryStream volStream)
+        private void BuildRealTOC(BinaryStream volStream, int baseRealTocOffset)
         {
             volStream.WriteInt32(TocHeader.MagicValue);
             volStream.WriteInt32(TocHeader.Version3_1);
 
             // Skip the block toc as it can't be written for now
-            volStream.BaseStream.Position = 0x800 + TocHeader.HeaderSize;
+            volStream.BaseStream.Position = baseRealTocOffset + TocHeader.HeaderSize;
 
             // Write all the data blocks.
             WriteEntryMetaBlocks();
@@ -103,11 +103,16 @@ namespace GT4FS.Core.Packing
             // We've written all of our blocks, and we now know their order - proceed to fill in the index blocks with the entry's block indexes
             FillIndexBlockEntryIndexes();
 
-            // At that point, index blocks are done, same for entry blocks, except the file page offsets. Data writing starts now.
-            // TODO
+            // We've got enough to build the header and merge blocks together now
+            BuildTocHeader(volStream, baseRealTocOffset);
 
-            // Actually write the toc blocks now.
-            volStream.Position = 0x800 + TocHeader.HeaderSize;
+            // At that point, we can start writing the files.
+            // TODO
+        }
+
+        private void BuildTocHeader(BinaryStream volStream, int baseRealTocOffset)
+        {
+            volStream.Position = baseRealTocOffset + TocHeader.HeaderSize;
             volStream.Position += 4; // Skip the first one
 
             int blockCount = _indexBlocks.Count + _entryBlocks.Count;
@@ -119,13 +124,13 @@ namespace GT4FS.Core.Packing
             volStream.Position += 4;
 
             int entryBlocksOffset = (int)volStream.Position;
-            using (volStream.TemporarySeek(0x800 + TocHeader.HeaderSize, SeekOrigin.Begin))
+            using (volStream.TemporarySeek(baseRealTocOffset + TocHeader.HeaderSize, SeekOrigin.Begin))
                 volStream.WriteInt32(entryBlocksOffset ^ 0 * Volume.OffsetCryptKey + Volume.OffsetCryptKey);
 
             // Actually write the tocs.
             for (int i = 0; i < mergedBlocks.Count; i++)
             {
-                int blockOffset = (int)volStream.Position;
+                int blockOffset = (int)volStream.Position - baseRealTocOffset;
 
                 byte[] block = mergedBlocks[i];
                 byte[] copy = new byte[block.Length];
@@ -134,14 +139,34 @@ namespace GT4FS.Core.Packing
 
                 Utils.XorEncryptFast(copySpan, 0x55);
                 var blockComp = PS2Zip.ZlibCodecCompress(copy);
-                
+
                 volStream.WriteBytes(blockComp);
 
-                using (volStream.TemporarySeek(0x800 + TocHeader.HeaderSize + ((i + 1) * 4), SeekOrigin.Begin))
-                    volStream.WriteInt32(blockOffset ^ (i + 1) * Volume.OffsetCryptKey + Volume.OffsetCryptKey);
+                using (volStream.TemporarySeek(baseRealTocOffset + TocHeader.HeaderSize + ((i + 1) * 4), SeekOrigin.Begin))
+                    volStream.WriteInt32(EncryptOffset(blockOffset, i + 1));
             }
 
+            // Write the final offset
+            int dataOffset = (int)volStream.Position;
+            using (volStream.TemporarySeek(baseRealTocOffset + TocHeader.HeaderSize + ((mergedBlocks.Count + 1) * 4), SeekOrigin.Begin))
+                volStream.WriteInt32(EncryptOffset(dataOffset, mergedBlocks.Count + 1));
+
+            // Finish up actual header
+            using (volStream.TemporarySeek(baseRealTocOffset + 8, SeekOrigin.Begin))
+            {
+                int pageCount = (int)Math.Round((double)(dataOffset / BlockSize), MidpointRounding.AwayFromZero);
+                volStream.WriteInt32(pageCount);
+                volStream.WriteInt32(dataOffset);
+                volStream.WriteUInt16((ushort)BlockSize);
+                volStream.WriteUInt16((ushort)(mergedBlocks.Count + 1));
+            }
+
+
+
         }
+
+        private static int EncryptOffset(int offset, int index)
+            => offset ^ index * Volume.OffsetCryptKey + Volume.OffsetCryptKey;
 
         public void WriteIndexBlocks()
         {
