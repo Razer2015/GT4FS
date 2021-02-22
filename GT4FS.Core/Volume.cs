@@ -12,7 +12,7 @@ namespace GT4FS.Core {
     {
         public const int DefaultBlockSize = 0x800;
         public const int OffsetCryptKey = 0x14ac327a;
-        public readonly byte[] DataCryptKey = new byte[] { 0x55 };
+        public static readonly byte[] DataCryptKey = new byte[] { 0x55 };
 
         private long _baseOffset = 0;
         private TocHeader _tocHeader;

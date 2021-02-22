@@ -3,6 +3,10 @@ using System.Collections.Generic;
 using System.Text;
 using System.Linq;
 using System.IO;
+using System.Buffers;
+using System.Buffers.Binary;
+using System.Runtime.CompilerServices;
+
 using Syroot.BinaryData;
 using Syroot.BinaryData.Core;
 using Syroot.BinaryData.Memory;
@@ -53,9 +57,6 @@ namespace GT4FS.Core.Packing
             Import(RootTree, mainFolder);
             TraverseBuildEntryPackList(RootTree);
             Console.WriteLine("[*] Done.");
-
-            
-            Build("test.bin");
         }
 
         /// <summary>
@@ -98,6 +99,47 @@ namespace GT4FS.Core.Packing
 
             // We got the index block count, so we can write the next/previous for our entries too
             FillEntryMetaBlockLinks();
+
+            // We've written all of our blocks, and we now know their order - proceed to fill in the index blocks with the entry's block indexes
+            FillIndexBlockEntryIndexes();
+
+            // At that point, index blocks are done, same for entry blocks, except the file page offsets. Data writing starts now.
+            // TODO
+
+            // Actually write the toc blocks now.
+            volStream.Position = 0x800 + TocHeader.HeaderSize;
+            volStream.Position += 4; // Skip the first one
+
+            int blockCount = _indexBlocks.Count + _entryBlocks.Count;
+            List<byte[]> mergedBlocks = new List<byte[]>(blockCount);
+            mergedBlocks.AddRange(_indexBlocks);
+            mergedBlocks.AddRange(_entryBlocks);
+
+            volStream.Position += 4 * mergedBlocks.Count;
+            volStream.Position += 4;
+
+            int entryBlocksOffset = (int)volStream.Position;
+            using (volStream.TemporarySeek(0x800 + TocHeader.HeaderSize, SeekOrigin.Begin))
+                volStream.WriteInt32(entryBlocksOffset ^ 0 * Volume.OffsetCryptKey + Volume.OffsetCryptKey);
+
+            // Actually write the tocs.
+            for (int i = 0; i < mergedBlocks.Count; i++)
+            {
+                int blockOffset = (int)volStream.Position;
+
+                byte[] block = mergedBlocks[i];
+                byte[] copy = new byte[block.Length];
+                Span<byte> copySpan = copy.AsSpan(0, block.Length);
+                block.AsSpan().CopyTo(copySpan);
+
+                Utils.XorEncryptFast(copySpan, 0x55);
+                var blockComp = PS2Zip.ZlibCodecCompress(copy);
+                
+                volStream.WriteBytes(blockComp);
+
+                using (volStream.TemporarySeek(0x800 + TocHeader.HeaderSize + ((i + 1) * 4), SeekOrigin.Begin))
+                    volStream.WriteInt32(blockOffset ^ (i + 1) * Volume.OffsetCryptKey + Volume.OffsetCryptKey);
+            }
 
         }
 
@@ -274,9 +316,21 @@ namespace GT4FS.Core.Packing
             }
         }
 
-        private void FillEntryMetaBlockIndexes()
+        private void FillIndexBlockEntryIndexes()
         {
+            int currentEntry = 0;
+            for (int i = 0; i < _indexBlocks.Count; i++)
+            {
+                ushort entryCount = (ushort)(BinaryPrimitives.ReadUInt16LittleEndian(_indexBlocks[i].AsSpan(2, 2)) / 2);
+                SpanWriter block = new SpanWriter(_indexBlocks[i]);
 
+                for (int j = 0; j < entryCount; j++)
+                {
+                    block.Position = BlockSize - (0x08 * (j + 1));
+                    block.Position += 4;
+                    block.WriteInt32((_indexBlocks.Count + 1) + currentEntry++);
+                }
+            }
         }
 
         /// <summary>
