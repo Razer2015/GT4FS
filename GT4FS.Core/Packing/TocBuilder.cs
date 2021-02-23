@@ -411,7 +411,7 @@ namespace GT4FS.Core.Packing
                 {
                     block.Position = BlockSize - (0x08 * (j + 1));
                     block.Position += 4;
-                    block.WriteInt32((_indexBlocks.Count + 1) + currentEntry++);
+                    block.WriteInt32(_indexBlocks.Count + currentEntry++);
                 }
             }
         }
