@@ -21,6 +21,9 @@ namespace GT4FS.Core.Packing
 
         public int NodeID { get; set; }
 
+        public int EntryBlockIndex { get; set; }
+        public int EntryBlockOffset { get; set; }
+
         public abstract ushort GetTypeMetaSize();
         public abstract void SerializeTypeMeta(ref SpanWriter writer);
 

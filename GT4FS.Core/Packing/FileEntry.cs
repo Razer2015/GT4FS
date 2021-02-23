@@ -13,7 +13,10 @@ namespace GT4FS.Core.Packing
         public int PageOffset { get; set; }
 
         public FileEntry(string name)
-            => Name = name;
+        { 
+            Name = name;
+            EntryType = VolumeEntryType.File;
+        }
 
         public override ushort GetTypeMetaSize()
             => 1 + 4 + 4 + 4; // Type + Page Offset + Date + Size

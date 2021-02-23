@@ -10,7 +10,10 @@ namespace GT4FS.Core.Packing
     {
         public List<Entry> ChildEntries { get; set; } = new List<Entry>();
         public DirEntry(string name)
-            => Name = name;
+        { 
+            Name = name;
+            EntryType = VolumeEntryType.Directory;
+        }
 
         public override ushort GetTypeMetaSize()
             => 1 + 4; // Type + Node ID
@@ -18,7 +21,6 @@ namespace GT4FS.Core.Packing
         public override void SerializeTypeMeta(ref SpanWriter writer)
         {
             writer.WriteByte((byte)EntryType);
-
             writer.WriteInt32(NodeID);
         }
     }

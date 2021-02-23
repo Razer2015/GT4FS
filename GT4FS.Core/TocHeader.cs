@@ -13,7 +13,7 @@ namespace GT4FS.Core {
 
         public uint Version { get; set; }
 
-        public int Length { get; set; }
+        public int CompressedTocLength { get; set; }
         public int PageCount { get; set; }
         public ushort PageLength { get; set; }
         public ushort EntryCount { get; set; }
@@ -26,7 +26,7 @@ namespace GT4FS.Core {
                 throw new Exception("Why are you trying to extract a VOL that's not meant to be extracted with this tool? Dummy!");
 
             Version = reader.ReadUInt32();
-            Length = reader.ReadInt32();
+            CompressedTocLength = reader.ReadInt32();
             PageCount = reader.ReadInt32();
             PageLength = reader.ReadUInt16();
             EntryCount = reader.ReadUInt16();
@@ -38,7 +38,7 @@ namespace GT4FS.Core {
             writer.WriteInt32(MagicValue, ByteConverter.Big);
             writer.WriteUInt32(Version);
 
-            writer.WriteInt32(Length);
+            writer.WriteInt32(CompressedTocLength);
             writer.WriteInt32(PageCount);
             writer.WriteUInt16(PageLength);
             writer.WriteUInt16(EntryCount);

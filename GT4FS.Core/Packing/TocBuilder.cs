@@ -17,6 +17,9 @@ namespace GT4FS.Core.Packing
     {
         public const int BlockHeaderSize = 0x0C;
 
+        public string InputFolder { get; set; }
+        public uint BaseRealTocOffset { get; set; }
+
         /// <summary>
         /// Size of each block. Defaults to 0x800.
         /// </summary>
@@ -40,52 +43,62 @@ namespace GT4FS.Core.Packing
         public List<byte[]> _entryBlocks;
         public List<byte[]> _indexBlocks;
 
+        // For writing the entry's page offsets
+        private int _baseDataOffset;
+        
         /// <summary>
         /// Current node ID.
         /// </summary>
         public int CurrentID = 1;
 
-        public void RegisterFilesToPack(string mainFolder, bool useCache)
+        public void RegisterFilesToPack(string inputFolder, bool useCache)
         {
             Console.WriteLine("[*] Indexing folder to prepare to pack..");
+            InputFolder = inputFolder;
 
             RootTree = new DirEntry(".");
             RootTree.NodeID = CurrentID++;
 
             _entries.Add(RootTree);
 
-            Import(RootTree, mainFolder);
+            Import(RootTree, InputFolder);
             TraverseBuildEntryPackList(RootTree);
-            Console.WriteLine("[*] Done.");
         }
 
         /// <summary>
         /// Builds the volume.
         /// </summary>
         /// <param name="outputFile"></param>
-        public void Build(string outputFile, int baseRealTocOffset)
+        public void Build(string outputFile, uint baseRealTocOffset)
         {
-            using (var fs = new FileStream(outputFile, FileMode.Create))
-            using (var volStream = new BinaryStream(fs))
-            {
-                // Write fake TOC
-                volStream.BaseStream.Seek(baseRealTocOffset);
+            Console.WriteLine("[*] Building volume.");
+            BaseRealTocOffset = baseRealTocOffset;
+            using var fs = new FileStream(outputFile, FileMode.Create);
+            using var volStream = new BinaryStream(fs);
 
-                BuildRealTOC(volStream, baseRealTocOffset);
-            }
+            // Write fake TOC
+            volStream.WriteInt32(TocHeader.MagicValue, ByteConverter.Big);
+            volStream.WriteInt16(2);
+            volStream.WriteInt16(2);
+            volStream.BaseStream.Seek(BaseRealTocOffset, SeekOrigin.Begin);
+
+            BuildRealTOC(volStream);
         }
 
         /// <summary>
         /// Builds the real table of contents.
         /// </summary>
         /// <param name="volStream"></param>
-        private void BuildRealTOC(BinaryStream volStream, int baseRealTocOffset)
+        private void BuildRealTOC(BinaryStream volStream)
         {
-            volStream.WriteInt32(TocHeader.MagicValue);
+            volStream.WriteInt32(TocHeader.MagicValue, ByteConverter.Big);
             volStream.WriteInt32(TocHeader.Version3_1);
 
             // Skip the block toc as it can't be written for now
-            volStream.BaseStream.Position = baseRealTocOffset + TocHeader.HeaderSize;
+            volStream.BaseStream.Position = BaseRealTocOffset + TocHeader.HeaderSize;
+
+            // Start writing the files.
+            WriteFiles();
 
             // Write all the data blocks.
             WriteEntryMetaBlocks();
@@ -104,33 +117,41 @@ namespace GT4FS.Core.Packing
             FillIndexBlockEntryIndexes();
 
             // We've got enough to build the header and merge blocks together now
-            BuildTocHeader(volStream, baseRealTocOffset);
+            BuildTocHeader(volStream);
 
-            // At that point, we can start writing the files.
-            // TODO
+            Console.WriteLine("[*] Merging data and toc...");
+            // Merge toc and file blob.
+            using var fs = new FileStream("gtfiles.temp", FileMode.Open);
+            int count = 0;
+            byte[] buffer = new byte[32_768];
+            while ( (count = fs.Read(buffer, 0, buffer.Length)) > 0)
+                volStream.BaseStream.Write(buffer, 0, count);
+
+#if RELEASE
+            try
+            {
+                File.Delete("gtfiles.temp");
+            }
+            catch { }
+#endif
+            Console.WriteLine("[*] Done.");
         }
 
-        private void BuildTocHeader(BinaryStream volStream, int baseRealTocOffset)
+        private void BuildTocHeader(BinaryStream volStream)
         {
-            volStream.Position = baseRealTocOffset + TocHeader.HeaderSize;
-            volStream.Position += 4; // Skip the first one
-
+            volStream.Position = BaseRealTocOffset + TocHeader.HeaderSize;
             int blockCount = _indexBlocks.Count + _entryBlocks.Count;
             List<byte[]> mergedBlocks = new List<byte[]>(blockCount);
             mergedBlocks.AddRange(_indexBlocks);
             mergedBlocks.AddRange(_entryBlocks);
 
             volStream.Position += 4 * mergedBlocks.Count;
-            volStream.Position += 4;
+            volStream.Position += 4; // This one is the data offset
 
-            int entryBlocksOffset = (int)volStream.Position;
-            using (volStream.TemporarySeek(baseRealTocOffset + TocHeader.HeaderSize, SeekOrigin.Begin))
-                volStream.WriteInt32(entryBlocksOffset ^ 0 * Volume.OffsetCryptKey + Volume.OffsetCryptKey);
-
-            // Actually write the tocs.
+            // Actually write the toc blocks.
             for (int i = 0; i < mergedBlocks.Count; i++)
             {
-                int blockOffset = (int)volStream.Position - baseRealTocOffset;
+                int blockOffset = (int)(volStream.Position - BaseRealTocOffset);
 
                 byte[] block = mergedBlocks[i];
                 byte[] copy = new byte[block.Length];
@@ -142,27 +163,60 @@ namespace GT4FS.Core.Packing
 
                 volStream.WriteBytes(blockComp);
 
-                using (volStream.TemporarySeek(baseRealTocOffset + TocHeader.HeaderSize + ((i + 1) * 4), SeekOrigin.Begin))
-                    volStream.WriteInt32(EncryptOffset(blockOffset, i + 1));
+                using (volStream.TemporarySeek(BaseRealTocOffset + TocHeader.HeaderSize + (i * 4), SeekOrigin.Begin))
+                    volStream.WriteInt32(EncryptOffset(blockOffset, i));
             }
+
+            int tocLength = (int)(volStream.Position - BaseRealTocOffset);
+            volStream.Align(BlockSize, grow: true);
 
             // Write the final offset
-            int dataOffset = (int)volStream.Position;
-            using (volStream.TemporarySeek(baseRealTocOffset + TocHeader.HeaderSize + ((mergedBlocks.Count + 1) * 4), SeekOrigin.Begin))
-                volStream.WriteInt32(EncryptOffset(dataOffset, mergedBlocks.Count + 1));
+            _baseDataOffset = (int)(volStream.Position - BaseRealTocOffset);
+            using (volStream.TemporarySeek(BaseRealTocOffset + TocHeader.HeaderSize + (mergedBlocks.Count * 4), SeekOrigin.Begin))
+                volStream.WriteInt32(EncryptOffset(tocLength, mergedBlocks.Count));
 
             // Finish up actual header
-            using (volStream.TemporarySeek(baseRealTocOffset + 8, SeekOrigin.Begin))
+            using (volStream.TemporarySeek(BaseRealTocOffset + 8, SeekOrigin.Begin))
             {
-                int pageCount = (int)Math.Round((double)(dataOffset / BlockSize), MidpointRounding.AwayFromZero);
+                int pageCount = _baseDataOffset / BlockSize;
+                volStream.WriteInt32(tocLength);
                 volStream.WriteInt32(pageCount);
-                volStream.WriteInt32(dataOffset);
                 volStream.WriteUInt16((ushort)BlockSize);
-                volStream.WriteUInt16((ushort)(mergedBlocks.Count + 1));
+                volStream.WriteUInt16((ushort)mergedBlocks.Count);
             }
+        }
 
+        private void WriteFiles()
+        {
+            using var fs = new FileStream("gtfiles.temp", FileMode.Create);
+            using var bs = new BinaryStream(fs);
 
+            WriteDirectory(bs, RootTree, "");
+        }
 
+        private void WriteDirectory(BinaryStream fileWriter, DirEntry parentDir, string path)
+        {
+            foreach (var entry in parentDir.ChildEntries)
+            {
+                if (entry.EntryType == VolumeEntryType.Directory)
+                {
+                    string subPath = string.IsNullOrEmpty(path) ? entry.Name : $"{path}/{entry.Name}";
+                    WriteDirectory(fileWriter, (DirEntry)entry, subPath);
+                }
+                else
+                {
+                    string filePath = string.IsNullOrEmpty(path) ? entry.Name : $"{path}/{entry.Name}";
+                    Console.WriteLine($"Writing: {filePath}");
+
+                    ((FileEntry)entry).PageOffset = (int)Math.Round((double)(fileWriter.Position / BlockSize), MidpointRounding.AwayFromZero);
+
+                    var file = File.ReadAllBytes(Path.Combine(InputFolder, filePath));
+                    //Utils.XorEncryptFast(file, 0x55);
+                    //var fileComp = PS2Zip.ZlibCodecCompress(file);
+                    fileWriter.Write(file);
+                    fileWriter.Align(BlockSize, grow: true);
+                }
+            }
         }
 
         private static int EncryptOffset(int offset, int index)
@@ -187,15 +241,14 @@ namespace GT4FS.Core.Packing
             blockWriter.Position = BlockHeaderSize;
             ushort entriesWriten = 0;
 
-            int blockSpaceLeft = BlockSize - BlockHeaderSize + 4; // Account for the int at the begining of the bottom toc
+            int blockSpaceLeft = BlockSize - (BlockHeaderSize + 4); // Account for the int at the begining of the bottom toc
+            blockSpaceLeft -= 8; // Account in advance for the next entry's index data
 
-            while (true)
+            while (_currentEntry < _firstBlockEntries.Count)
             {
-                if (_currentEntry >= _firstBlockEntries.Count)
-                    break; // We are completely done writing the TOC, finish up the block
-
                 Entry entry = _firstBlockEntries[_currentEntry];
                 int entrySize = 4 + Encoding.UTF8.GetByteCount(entry.Name);
+
                 if (entrySize > blockSpaceLeft)
                     break; // Predicted exceeded block bound, finish it up
 
@@ -204,7 +257,7 @@ namespace GT4FS.Core.Packing
                 blockWriter.Endian = Endian.Big;
                 blockWriter.WriteInt32(entry.ParentNode);
                 blockWriter.Endian = Endian.Little;
-                blockWriter.WriteString0(entry.Name);
+                blockWriter.WriteStringRaw(entry.Name);
                 blockWriter.Align(0x04); // String is aligned
 
                 int endPos = blockWriter.Position;
@@ -271,13 +324,11 @@ namespace GT4FS.Core.Packing
             blockWriter.Position = BlockHeaderSize;
             ushort entriesWriten = 0;
 
-            int blockSpaceLeft = BlockSize - BlockHeaderSize + 4; // Account for the int at the begining of the bottom toc
+            int blockSpaceLeft = BlockSize - (BlockHeaderSize + 4); // Account for the int at the begining of the bottom toc
+            blockSpaceLeft -= 8; // Account in advance for the next entry's indexing data
 
-            while (true)
+            while (_currentEntry < _entries.Count)
             {
-                if (_currentEntry >= _entries.Count)
-                    break; // We are completely done writing the TOC, finish up the block
-
                 Entry entry = _entries[_currentEntry];
                 int entrySize = entry.GetTotalSize(blockWriter.Position);
                 if (entrySize > blockSpaceLeft)
@@ -286,12 +337,16 @@ namespace GT4FS.Core.Packing
                 if (entriesWriten == 0)
                     _firstBlockEntries.Add(entry);
 
+                // Just a quick shortcut for later on, when writing the file data
+                entry.EntryBlockIndex = _entryBlocks.Count;
+                entry.EntryBlockOffset = blockWriter.Position;
+
                 // Begin to write the entry's common information
                 int entryOffset = blockWriter.Position;
                 blockWriter.Endian = Endian.Big;
                 blockWriter.WriteInt32(entry.ParentNode);
                 blockWriter.Endian = Endian.Little;
-                blockWriter.WriteString0(entry.Name);
+                blockWriter.WriteStringRaw(entry.Name);
                 blockWriter.Align(0x04); // String is aligned
 
                 // Write type specific
@@ -320,7 +375,7 @@ namespace GT4FS.Core.Packing
             // Write up the block info - write what we can write - the entry count
             blockWriter.Position = 0;
             blockWriter.WriteInt16(0); // Block Type
-            blockWriter.WriteUInt16((ushort)((entriesWriten * 2) + 1));
+            blockWriter.WriteUInt16((ushort)(entriesWriten * 2));
 
             return buffer;
         }
@@ -348,6 +403,9 @@ namespace GT4FS.Core.Packing
             {
                 ushort entryCount = (ushort)(BinaryPrimitives.ReadUInt16LittleEndian(_indexBlocks[i].AsSpan(2, 2)) / 2);
                 SpanWriter block = new SpanWriter(_indexBlocks[i]);
+
+                //block.Position = BlockSize - (0x08 * _indexBlocks.Count);
+                //block.WriteInt32(_indexBlocks.Count);
 
                 for (int j = 0; j < entryCount; j++)
                 {
@@ -382,6 +440,11 @@ namespace GT4FS.Core.Packing
                 else
                 {
                     entry = new FileEntry(relativePath);
+                    string absolutePath = Path.Combine(folder, relativePath);
+                    var fInfo = new FileInfo(absolutePath);
+
+                    ((FileEntry)entry).Size = (int)fInfo.Length;
+                    ((FileEntry)entry).ModifiedDate = fInfo.LastWriteTimeUtc;
                     entry.NodeID = CurrentID++;
                 }
 

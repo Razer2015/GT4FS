@@ -233,6 +233,7 @@ namespace GT4FS.Tester
         {
             var tocBuilder = new TocBuilder();
             tocBuilder.RegisterFilesToPack(options.Input, options.Cache);
+            tocBuilder.Build(options.Output, 0x800);
 
             return 0;
         }

@@ -6,6 +6,7 @@ using GT.Shared.Threading;
 using GT.Shared.Logging;
 using System.Diagnostics;
 using System.Globalization;
+using System.Buffers.Binary;
 
 using GT.Shared;
 
@@ -159,13 +160,12 @@ namespace GT4FS.Core {
             try
             {
                 if (File.Exists(destPath) && !overWrite)
-                {
                     return true;
-                }
+
                 Directory.CreateDirectory(Path.GetDirectoryName(destPath) ?? throw new InvalidOperationException());
                 reader.BaseStream.Position = offset;
                 var data = reader.ReadBytes((int)packedSize);
-                if (Util.DataAtUInt32(data, 0) == 0xC5EEF7FFu)
+                if (data.Length > 4 && BinaryPrimitives.ReadUInt32BigEndian(data.AsSpan(0, 4)) == 0xC5EEF7FFu)
                     data = PS2Zip.Inflate(data);
 
                 Debug.Assert(data.Length == realSize);
