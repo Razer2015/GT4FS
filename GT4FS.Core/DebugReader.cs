@@ -209,7 +209,64 @@ namespace GT4FS.Core
                 }
             }
         }
-         
+        
+
+        // Non original
+        public void DebugWriteEntryInfos()
+        {
+            VolumeStream.Position = 0x800 + 0x12;
+            ushort blockCount = VolumeStream.ReadUInt16();
+
+            using var sw = new StreamWriter("block_info.txt");
+
+            for (int i = 0; i < blockCount; i++)
+            {
+                BlockInfo block = GetBlock(i);
+                SpanReader sr = new SpanReader(block.BlockBuffer);
+
+                short blockType = sr.ReadInt16();
+                short entryCount = sr.ReadInt16();
+                int realEntryCount = (entryCount / 2);
+
+                sw.WriteLine($"Block #{i} {(blockType == 1 ? "[INDEXER]" : "")} - {entryCount} entries [{realEntryCount} actual]");
+
+                for (int j = 0; j < realEntryCount; j++)
+                {
+                    sr.Position = BlockSize - (j * 0x08) - 0x08;
+                    short entryOffset = sr.ReadInt16();
+                    short entryLen = sr.ReadInt16();
+
+                    if (blockType == 1)
+                    {
+                        int blockIndex = sr.ReadInt16();
+                        sr.Position = entryOffset;
+
+                        sr.Endian = Syroot.BinaryData.Core.Endian.Big;
+                        int parentNode = sr.ReadInt32();
+                        sr.Endian = Syroot.BinaryData.Core.Endian.Little;
+                        string str = sr.ReadStringRaw(entryLen - 4);
+
+                        sw.WriteLine($"{j} -> Offset: {entryOffset:X2} - Length: {entryLen} - Points to Block: {blockIndex} | ParentNode: {parentNode}, Name: {str}");
+                    }
+                    else
+                    {
+                        short entryMetaTypeOffset = sr.ReadInt16();
+                        short entryMetaTypeLen = sr.ReadInt16();
+                        sr.Position = entryOffset;
+
+                        sr.Endian = Syroot.BinaryData.Core.Endian.Big;
+                        int parentNode = sr.ReadInt32();
+                        sr.Endian = Syroot.BinaryData.Core.Endian.Little;
+
+                        string str = sr.ReadStringRaw(entryLen - 4);
+
+                        sw.WriteLine($"{j} -> Offset: {entryOffset:X2} - Length: {entryLen} - Data Offset: {entryMetaTypeOffset} -  Data Len: {entryMetaTypeLen} | | ParentNode: {parentNode}, Name: {str}");
+                    }
+                }
+
+                sw.WriteLine();
+            }
+        }
     }
 
     public class BlockInfo
@@ -298,7 +355,7 @@ namespace GT4FS.Core
                         entryOffset = sr.ReadInt16();
 
                         int entryIndexOffset = (mid * 0x08 - blockSize) + baseOffset + entryitorOffset;
-                        sr.Position += 2;
+                        sr.Position = entryIndexOffset + 2;
 
                         entryLength = sr.ReadInt16();
                         sr.Position = entryOffset;

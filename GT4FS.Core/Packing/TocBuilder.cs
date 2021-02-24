@@ -37,7 +37,7 @@ namespace GT4FS.Core.Packing
         private int _currentEntry = 0;
 
         // For the indexing blocks
-        private List<Entry> _firstBlockEntries = new List<Entry>();
+        private List<Entry> _entryBlockCutoffs = new List<Entry>();
 
         // List of all TOC block buffers, kept in memory to write the previous/next pages and page offsets later on.
         public List<byte[]> _entryBlocks;
@@ -225,7 +225,7 @@ namespace GT4FS.Core.Packing
         public void WriteIndexBlocks()
         {
             _indexBlocks = new List<byte[]>();
-            while (_currentEntry < _firstBlockEntries.Count)
+            while (_currentEntry * 2 < _entryBlockCutoffs.Count - 1)
             {
                 byte[] dataBlock = WriteNextIndexBlock();
                 _indexBlocks.Add(dataBlock);
@@ -244,10 +244,15 @@ namespace GT4FS.Core.Packing
             int blockSpaceLeft = BlockSize - (BlockHeaderSize + 4); // Account for the int at the begining of the bottom toc
             blockSpaceLeft -= 8; // Account in advance for the next entry's index data
 
-            while (_currentEntry < _firstBlockEntries.Count)
+            _entryBlockCutoffs.RemoveAt(0); // We don't need the very start
+
+            while (_currentEntry * 2 < _entryBlockCutoffs.Count - 1) // Ignore the end
             {
-                Entry entry = _firstBlockEntries[_currentEntry];
-                int entrySize = 4 + Encoding.UTF8.GetByteCount(entry.Name);
+                Entry prevEntry = _entryBlockCutoffs[(_currentEntry * 2)];
+                Entry nextEntry = _entryBlockCutoffs[(_currentEntry * 2) + 1];
+                string indexName = CompareEntries(prevEntry, nextEntry);
+
+                int entrySize = 4 + Encoding.UTF8.GetByteCount(indexName);
 
                 if (entrySize > blockSpaceLeft)
                     break; // Predicted exceeded block bound, finish it up
@@ -255,9 +260,9 @@ namespace GT4FS.Core.Packing
                 // Begin to write the entry's common information
                 int entryOffset = blockWriter.Position;
                 blockWriter.Endian = Endian.Big;
-                blockWriter.WriteInt32(entry.ParentNode);
+                blockWriter.WriteInt32(nextEntry.ParentNode);
                 blockWriter.Endian = Endian.Little;
-                blockWriter.WriteStringRaw(entry.Name);
+                blockWriter.WriteStringRaw(indexName);
                 blockWriter.Align(0x04); // String is aligned
 
                 int endPos = blockWriter.Position;
@@ -267,7 +272,7 @@ namespace GT4FS.Core.Packing
                 // Write the lookup information at the end of the block
                 blockWriter.Position = BlockSize - ((entriesWriten + 1) * 0x08);
                 blockWriter.WriteUInt16((ushort)entryOffset);
-                blockWriter.WriteUInt16((ushort)(4 + Encoding.UTF8.GetByteCount(entry.Name)));
+                blockWriter.WriteUInt16((ushort)(4 + Encoding.UTF8.GetByteCount(indexName)));
                 blockWriter.WriteUInt32(0); // We will write the block index later as we don't have it
 
                 // Move on to next.
@@ -327,15 +332,16 @@ namespace GT4FS.Core.Packing
             int blockSpaceLeft = BlockSize - (BlockHeaderSize + 4); // Account for the int at the begining of the bottom toc
             blockSpaceLeft -= 8; // Account in advance for the next entry's indexing data
 
+            Entry entry = null;
             while (_currentEntry < _entries.Count)
             {
-                Entry entry = _entries[_currentEntry];
+                entry = _entries[_currentEntry];
                 int entrySize = entry.GetTotalSize(blockWriter.Position);
                 if (entrySize > blockSpaceLeft)
                     break; // Predicted exceeded block bound, finish it up
 
                 if (entriesWriten == 0)
-                    _firstBlockEntries.Add(entry);
+                    _entryBlockCutoffs.Add(entry);
 
                 // Just a quick shortcut for later on, when writing the file data
                 entry.EntryBlockIndex = _entryBlocks.Count;
@@ -371,6 +377,9 @@ namespace GT4FS.Core.Packing
 
                 blockWriter.Position = endPos;
             }
+
+            // Add the last block's to the middles
+            _entryBlockCutoffs.Add(_entries[_currentEntry - 1]);
 
             // Write up the block info - write what we can write - the entry count
             blockWriter.Position = 0;
@@ -448,6 +457,39 @@ namespace GT4FS.Core.Packing
                 entry.ParentNode = parent.NodeID;
                 parent.ChildEntries.Add(entry);
             }
+        }
+
+        /// <summary>
+        /// Compares two entries, to set up index blocks for binary searching.
+        /// </summary>
+        /// <param name="prevLastBlockEntry"></param>
+        /// <param name="nextFirstBlockEntry"></param>
+        /// <returns></returns>
+        public string CompareEntries(Entry prevLastBlockEntry, Entry nextFirstBlockEntry)
+        {
+            /* Index blocks work in such a way that the game can easily pinpoint the location of the block which
+             * contains the entry the game is looking for.
+             * Each entry in the index blocks are the "middle" of two data blocks. The game will first compare the node ids 
+             * through binary searching, *then* the string itself.
+             * We only need to store the first difference between the last entry of the previous block, and the first
+             * entry of the next block.
+             */
+
+            if (prevLastBlockEntry.ParentNode != nextFirstBlockEntry.ParentNode)
+                return string.Empty; // No point returning a file name, the parent node is already enough of a difference
+
+            string lastName = prevLastBlockEntry.Name;
+            string firstNextName = nextFirstBlockEntry.Name;
+
+            int minLen = Math.Min(lastName.Length, firstNextName.Length);
+            for (int i = 0; i < minLen; i++)
+            {
+                if (lastName[i] != firstNextName[i])
+                    return firstNextName.Substring(0, i + 1);
+            }
+            
+            // This is not possible, or else both entries are the same file due to being the same parent
+            throw new ArgumentException($"First entry is equal to the second entry. ({lastName}, parent ID {prevLastBlockEntry.ParentNode})");
         }
 
         /// <summary>
