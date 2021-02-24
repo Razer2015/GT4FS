@@ -211,7 +211,7 @@ namespace GT4FS.Core.Packing
                     ((FileEntry)entry).PageOffset = (int)Math.Round((double)(fileWriter.Position / BlockSize), MidpointRounding.AwayFromZero);
 
                     var file = File.ReadAllBytes(Path.Combine(InputFolder, filePath));
-                    //Utils.XorEncryptFast(file, 0x55);
+                    
                     //var fileComp = PS2Zip.ZlibCodecCompress(file);
                     fileWriter.Write(file);
                     fileWriter.Align(BlockSize, grow: true);
@@ -403,9 +403,6 @@ namespace GT4FS.Core.Packing
             {
                 ushort entryCount = (ushort)(BinaryPrimitives.ReadUInt16LittleEndian(_indexBlocks[i].AsSpan(2, 2)) / 2);
                 SpanWriter block = new SpanWriter(_indexBlocks[i]);
-
-                //block.Position = BlockSize - (0x08 * _indexBlocks.Count);
-                //block.WriteInt32(_indexBlocks.Count);
 
                 for (int j = 0; j < entryCount; j++)
                 {

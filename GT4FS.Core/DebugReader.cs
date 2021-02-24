@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using System.Buffers.Binary;
 using System.IO;
 using System.IO.Compression;
+using System.Diagnostics;
 
 using Syroot.BinaryData;
 using Syroot.BinaryData.Memory;
@@ -37,14 +38,16 @@ namespace GT4FS.Core
         {
             Entry entry = null;
 
+            Debug.WriteLine($"Begin path traversal: '{path}'");
             foreach (var part in path.Split('/'))
             {
+                Debug.WriteLine($"Traversing: {part}, with parent node ID {parentID}");
                 entry = GetEntryOfPathPart(parentID, part, part.Length);
 
-                if (((byte)entry.EntryType & 0x01) == 0)
-                    return null;
+                if (entry.EntryType == Packing.VolumeEntryType.File || entry.EntryType == Packing.VolumeEntryType.CompressedFile)
+                    return entry;
 
-                parentID = entry.ParentNode;
+                parentID = entry.NodeID;
             }
 
             return entry;
@@ -60,16 +63,22 @@ namespace GT4FS.Core
             BlockInfo blockInfo = GetBlock(0);
             while (blockInfo.IsIndexBlock)
             {
+                Debug.WriteLine($"Searching index block ({blockInfo.BlockIndex}) for {part}");
                 int nextBlockIndex = blockInfo.SearchBlockIndex(entryInput, entryInput.Length);
                 blockInfo.SwitchToNewIndex(nextBlockIndex);
+
+                if (blockInfo.IsIndexBlock)
+                    Debug.WriteLine($"Next index block to search is: {blockInfo.BlockIndex}");
             }
 
-            // At that point we have the block of which the entry we're looking for is in
+            Debug.WriteLine($"{part} ({parentID}) is located at block index: {blockInfo.BlockIndex}");
 
+            // At that point we have the block of which the entry we're looking for is in
             if (!blockInfo.SearchEntry(entryInput, entryInput.Length, out int resultEntryIndex))
                 return null; // return default entry
             else
             {
+                Debug.WriteLine($"Found {part} at block {blockInfo.BlockIndex} with entry index {resultEntryIndex}");
                 // Read entry and return it using the index
                 SpanReader sr = new SpanReader(blockInfo.BlockBuffer);
                 sr.Position = BlockSize - (resultEntryIndex * 0x08);
@@ -134,6 +143,16 @@ namespace GT4FS.Core
 
         public static int CompareEntries(byte[] entry1, int entry1Len, byte[] entry2, int entry2Len)
         {
+#if DEBUG
+            int pNode1 = BinaryPrimitives.ReadInt32BigEndian(entry1.AsSpan(0, 4));
+            int pNode2 = BinaryPrimitives.ReadInt32BigEndian(entry2.AsSpan(0, 4));
+
+            string str1 = entry1Len > 4 ? Encoding.ASCII.GetString(entry1.AsSpan(4)) : "<empty>";
+            string str2 = entry2Len > 4 ? Encoding.ASCII.GetString(entry2.AsSpan(4)) : "<empty>";
+
+            Debug.WriteLine($"Comparing: {str1} ({pNode1}) <-> {str2} ({pNode2})");
+#endif
+
             if (entry1Len > entry2Len)
             {
                 if (entry2Len == 0)
@@ -238,8 +257,8 @@ namespace GT4FS.Core
 
             if (diff < 0)
             {
-                // return the first
-                sr.Position = blockSize - 4;
+                // return the first block index
+                sr.Position = (blockSize - 0x08) + 4;
                 return sr.ReadInt32();
             }
 
@@ -251,71 +270,76 @@ namespace GT4FS.Core
             entryIndexer = sr.ReadBytes(entryLength);
             diff = DebugReader.CompareEntries(input, inputLen, entryIndexer, entryLength);
 
-            if (diff < 1)
+            if (diff > 0)
             {
-                int min = 0;
-                do
+                // return the last block index
+                sr.Position = blockSize - (realEntryCount * 0x08) + 4;
+                return sr.ReadInt32();
+            }
+
+            int min = 0;
+            int max = realEntryCount;
+            int mid = (min + max) / 2;
+
+            while (min < max)
+            {
+                if (max - min < 8)
                 {
-                    int max = realEntryCount;
-                    int mid = (min + max) / 2;
-                    while (true)
+                    mid = min;
+                    int baseOffset = blockSize - (mid * 0x08);
+                    int entryitorOffset = baseOffset;
+                    if (max < min)
+                        return -1;
+
+                    while (min <= max)
                     {
-                        if (max - min < 8)
+                        entryitorOffset -= 0x08;
+                        sr.Position = entryitorOffset;
+                        entryOffset = sr.ReadInt16();
+
+                        int entryIndexOffset = (mid * 0x08 - blockSize) + baseOffset + entryitorOffset;
+                        sr.Position += 2;
+
+                        entryLength = sr.ReadInt16();
+                        sr.Position = entryOffset;
+                        entryIndexer = sr.ReadBytes(entryLength);
+                        diff = DebugReader.CompareEntries(input, inputLen, entryIndexer, entryLength);
+                        if (diff == 0)
                         {
-                            if (max < min)
-                                return -1;
-
-                            int off = (blockSize - (min * 0x08));
-                            int t = off;
-
-                            while (max > min)
-                            {
-                                // LAB_0067fad0
-                                t -= 8;
-                                sr.Position = t;
-                                entryOffset = sr.ReadInt16();
-
-                                sr.Position = blockSize - (min * 0x08) + off + t;
-                                sr.Position += 2;
-                                entryLength = sr.ReadInt16();
-
-                                sr.Position = entryOffset;
-                                entryIndexer = sr.ReadBytes(entryLength);
-                                diff = DebugReader.CompareEntries(input, inputLen, entryIndexer, entryLength);
-
-                                if (diff <= 0)
-                                    return sr.ReadInt32();
-
-                                min++;
-                            }
-
-                            return -1;
+                            sr.Position = entryIndexOffset - 4;
+                            return sr.ReadInt32();
                         }
-                        else
+                        else if (diff < 0)
                         {
-                            // Get previous to mid
-                            sr.Position = blockSize + (mid * 0x08);
-                            sr.Position -= 8;
-
-                            entryOffset = sr.ReadInt16();
-                            entryLength = sr.ReadInt16();
-                            sr.Position = entryOffset;
-                            entryIndexer = sr.ReadBytes(entryLength);
-                            diff = DebugReader.CompareEntries(input, inputLen, entryIndexer, entryLength);
-
-                            if (diff == 0)
-                                break;// LAB_0067f970
-                            else if (diff < 0)
-                            {
-                                // Got it
-                                return sr.ReadInt32();
-                            }
-
-                            min = mid;
-                            mid += max / 2;
+                            sr.Position = entryIndexOffset + 4;
+                            return sr.ReadInt32();
                         }
+
+                        min++;
                     }
-                } while (true);
+
+                    return -1;
+                }
+
+                sr.Position = blockSize - (mid * 0x08);
+                entryOffset = sr.ReadInt16();
+                entryLength = sr.ReadInt16();
+                sr.Position = entryOffset;
+                entryIndexer = sr.ReadBytes(entryLength);
+
+                diff = DebugReader.CompareEntries(input, inputLen, entryIndexer, entryLength);
+                if (diff == 0)
+                {
+                    // return the matching index
+                    sr.Position = blockSize - (mid * 0x08) + 4;
+                    return sr.ReadInt32();
+                }
+                else if (diff > 0)
+                    min = mid;
+                else
+                    max = mid;
+
+                mid = (min + max) / 2;
             }
 
             throw new Exception("Failed to bsearch for the block entry.");
@@ -406,7 +430,7 @@ namespace GT4FS.Core
                 diff = DebugReader.CompareEntries(input, inputLen, entryIndexer, entryLength);
                 if (diff == 0)
                 {
-                    result = mid;
+                    result = mid - 1;
                     return true;
                 }
                 else if (diff > 0)

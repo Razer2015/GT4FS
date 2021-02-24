@@ -8,7 +8,9 @@ namespace GT4FS.Core.Packing
 {
     public class DirEntry : Entry
     {
-        public List<Entry> ChildEntries { get; set; } = new List<Entry>();
+        public List<Entry> ChildEntries { get; set; } = new();
+
+        public DirEntry() { }
         public DirEntry(string name)
         { 
             Name = name;

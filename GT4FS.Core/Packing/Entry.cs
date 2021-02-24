@@ -69,9 +69,9 @@ namespace GT4FS.Core.Packing
             }
             else if (type == VolumeEntryType.Directory)
             {
-                entry = new FileEntry();
-                ((FileEntry)entry).EntryType = type;
-                ((FileEntry)entry).NodeID = sr.ReadInt32();
+                entry = new DirEntry();
+                ((DirEntry)entry).EntryType = type;
+                ((DirEntry)entry).NodeID = sr.ReadInt32();
             }
 
             return entry;
