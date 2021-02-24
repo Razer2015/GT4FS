@@ -44,6 +44,39 @@ namespace GT4FS.Core.Packing
 
             return (ushort)(newOffset - baseOffset);
         }
+
+        public static Entry ReadEntryFromBuffer(ref SpanReader sr)
+        {
+            Entry entry = null;
+            VolumeEntryType type = (VolumeEntryType)sr.ReadByte();
+            if (type == VolumeEntryType.CompressedFile)
+            {
+                entry = new CompressedFileEntry();
+                ((CompressedFileEntry)entry).EntryType = type;
+                ((CompressedFileEntry)entry).PageOffset = sr.ReadInt32();
+                ((CompressedFileEntry)entry).ModifiedDate = sr.ReadDateTimeT();
+                ((CompressedFileEntry)entry).CompressedSize = sr.ReadInt32();
+                ((CompressedFileEntry)entry).Size = sr.ReadInt32();
+            }
+            else if (type == VolumeEntryType.File)
+            {
+                entry = new FileEntry();
+                ((FileEntry)entry).EntryType = type;
+                ((FileEntry)entry).PageOffset = sr.ReadInt32();
+                ((FileEntry)entry).ModifiedDate = sr.ReadDateTimeT();
+                ((FileEntry)entry).Size = sr.ReadInt32();
+                ((FileEntry)entry).EntryType = type;
+            }
+            else if (type == VolumeEntryType.Directory)
+            {
+                entry = new FileEntry();
+                ((FileEntry)entry).EntryType = type;
+                ((FileEntry)entry).NodeID = sr.ReadInt32();
+            }
+
+            return entry;
+        }
+
     }
 
     public enum VolumeEntryType

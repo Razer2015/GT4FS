@@ -6,21 +6,22 @@ using Syroot.BinaryData.Memory;
 
 namespace GT4FS.Core.Packing
 {
-    public class FileEntry : Entry
+    public class CompressedFileEntry : Entry
     {
+        public int CompressedSize { get; set; }
         public int Size { get; set; }
         public DateTime ModifiedDate { get; set; } = DateTime.Now;
         public int PageOffset { get; set; }
 
-        public FileEntry() { }
-        public FileEntry(string name)
+        public CompressedFileEntry() { }
+        public CompressedFileEntry(string name)
         { 
             Name = name;
             EntryType = VolumeEntryType.File;
         }
 
         public override ushort GetTypeMetaSize()
-            => 1 + 4 + 4 + 4; // Type + Page Offset + Date + Size
+            => 1 + 4 + 4 + 4 + 4; // Type + Page Offset + Date + Comp Size + Size
 
         public override void SerializeTypeMeta(ref SpanWriter writer)
         {
@@ -28,6 +29,7 @@ namespace GT4FS.Core.Packing
 
             writer.WriteInt32(PageOffset);
             writer.WriteDateTimeT(ModifiedDate);
+            writer.WriteInt32(CompressedSize);
             writer.WriteInt32(Size);
         }
     }
