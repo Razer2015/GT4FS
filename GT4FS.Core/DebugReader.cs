@@ -269,7 +269,7 @@ namespace GT4FS.Core
 
                         string str = sr.ReadStringRaw(entryLen - 4);
 
-                        sw.WriteLine($"{j} -> Offset: {entryOffset:X2} - Length: {entryLen} - Data Offset: {entryMetaTypeOffset} -  Data Len: {entryMetaTypeLen} | | ParentNode: {parentNode}, Name: {str}");
+                        sw.WriteLine($"{j} -> Offset: {entryOffset:X2} - Length: {entryLen} - Data Offset: {entryMetaTypeOffset} - Data Len: {entryMetaTypeLen} | ParentNode: {parentNode}, Name: {str}");
                     }
                 }
 

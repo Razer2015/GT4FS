@@ -122,9 +122,9 @@ namespace GT4FS.Core {
                     case VolumeEntryType.CompressedFile: // Compressed file
                         var cfile = node as CompressedFileEntry;
                         if (nodes.Count() - 1 > i)
-                            sw?.WriteLine($"{string.Join("", prefixFolders)}├── {node.Name}{(debugInfo ? $" [P:{node.ParentNode}] (Offset: 0x{_volume.GetFileOffset((uint)cfile.PageOffset):X8} - Size: 0x{cfile.CompressedSize:X8} - RealSize: 0x{cfile.Size:X8} - ModifiedDate: {cfile.ModifiedDate:s})" : "")}");
+                            sw?.WriteLine($"{string.Join("", prefixFolders)}├── {node.Name}{(debugInfo ? $" [P:{node.ParentNode}] [Z] (Offset: 0x{_volume.GetFileOffset((uint)cfile.PageOffset):X8} - Size: 0x{cfile.CompressedSize:X8} - RealSize: 0x{cfile.Size:X8} - ModifiedDate: {cfile.ModifiedDate:s})" : "")}");
                         else
-                            sw?.WriteLine($"{string.Join("", prefixFolders)}└── {node.Name}{(debugInfo ? $" [P:{node.ParentNode}] (Offset: 0x{_volume.GetFileOffset((uint)cfile.PageOffset):X8} - Size: 0x{cfile.CompressedSize:X8} - RealSize: 0x{cfile.Size:X8} - ModifiedDate: {cfile.ModifiedDate:s})" : "")}");
+                            sw?.WriteLine($"{string.Join("", prefixFolders)}└── {node.Name}{(debugInfo ? $" [P:{node.ParentNode}] [Z] (Offset: 0x{_volume.GetFileOffset((uint)cfile.PageOffset):X8} - Size: 0x{cfile.CompressedSize:X8} - RealSize: 0x{cfile.Size:X8} - ModifiedDate: {cfile.ModifiedDate:s})" : "")}");
                         break;
                     default:
                         throw new ArgumentOutOfRangeException($"Unknown flag {node.EntryType}");
@@ -140,7 +140,7 @@ namespace GT4FS.Core {
                 Nodes.Add(new Node(buffer));
             }
 
-            _nodeEntries = Nodes.Where(x => x.Flag != 0).SelectMany(x => x.NodeEntries);
+            _nodeEntries = Nodes.Where(x => x.Flag == 0).SelectMany(x => x.NodeEntries);
         }
 
         private List<(string Path, long Offset, uint PackedSize, uint RealSize, DateTime ModifiedDate)> GetAllFiles()
