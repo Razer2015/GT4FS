@@ -105,24 +105,35 @@ namespace GT4FS.Core.Packing
             // Skip the block toc as it can't be written for now
             volStream.BaseStream.Position = BaseRealTocOffset + TocHeader.HeaderSize;
 
-            // Start writing the files.
-            WriteFiles();
+            try
+            {
+                // Start writing the files.
+                WriteFiles();
 
-            // Write all the entries.
-            WriteBlocks();
+                // Write all the entries.
+                WriteBlocks();
 
-            // We've got enough to build the header and merge blocks together now
-            BuildTocHeader(volStream);
+                // We've got enough to build the header and merge blocks together now
+                BuildTocHeader(volStream);
 
-            
-            Console.WriteLine("[*] Merging data and toc...");
-            // Merge toc and file blob.
-            using var fs = new FileStream("gtfiles.temp", FileMode.Open);
-            int count = 0;
-            byte[] buffer = new byte[32_768];
-            while ( (count = fs.Read(buffer, 0, buffer.Length)) > 0)
-                volStream.BaseStream.Write(buffer, 0, count);
-            
+
+                Console.WriteLine("[*] Merging data and toc...");
+                // Merge toc and file blob.
+                using var fs = new FileStream("gtfiles.temp", FileMode.Open);
+                int count = 0;
+                byte[] buffer = new byte[32_768];
+                while ((count = fs.Read(buffer, 0, buffer.Length)) > 0)
+                    volStream.BaseStream.Write(buffer, 0, count);
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"An error occured while building volume: {e}");
+            }
+            finally
+            {
+                if (File.Exists("gtfiles.temp"))
+                    File.Delete("gtfiles.temp");
+            }
 
             Console.WriteLine("Done.");
         }

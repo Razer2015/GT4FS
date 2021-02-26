@@ -54,7 +54,8 @@ namespace GT4FS.Tester
             [Option('o', "output", HelpText = "File to pack to (Default: GTNew.VOL).")]
             public string Output { get; set; } = "GTNew.VOL";
 
-            [Option('g', "game", Required = true, HelpText = "Target game to pack the volume for. Supported: GTHD.")]
+            [Option('g', "game", Required = true, HelpText = "Target game to pack the volume for. " +
+                "Supported: GT4, TT, GTHD, TT_DEMO, GT4_MX5_DEMO, GT4_FIRST_PREV, GT4O or CUSTOM for a custom one (use --toc-offset).")]
             public string GameType { get; set; }
 
             [Option("toc-offset", HelpText = "Toc offset to use when packing as custom game type.")]
