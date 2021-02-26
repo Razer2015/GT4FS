@@ -47,7 +47,7 @@ namespace GT.Shared.FileSystem {
         ///     Retrieve the VOL stream(s) and the corresponding filename.
         /// </summary>
         /// <returns></returns>
-        public IEnumerable<(Stream stream, string fileName)> GetStreams() {
+        public IEnumerable<(Stream stream, string fileName)> GetVOLStreams() {
             if (!_parsed) GetFileType();
 
             switch (_fileType) {
@@ -86,6 +86,46 @@ namespace GT.Shared.FileSystem {
                 case FileType.TOC22_ISO:
                 case FileType.GTPSP_VOL:
                 case FileType.GTPSP_ISO:
+                default:
+                    throw new Exception("Invalid VOL type, can't get streams.");
+            }
+        }
+
+        /// <summary>
+        ///     Retrieve all files from (both) descriptors
+        /// </summary>
+        /// <returns></returns>
+        public IEnumerable<(Stream stream, string filePath)> GetStreams()
+        {
+            if (!_parsed) GetFileType();
+
+            switch (_fileType)
+            {
+                case FileType.TOC31_ISO:
+                case FileType.TOC22_ISO:
+                case FileType.GTPSP_ISO:
+                    using (FileStream isoStream = File.Open(_filePath, FileMode.Open))
+                    {
+                        long nextDescriptor = 0x8000;
+                        do
+                        {
+                            isoStream.Seek(nextDescriptor -= 0x8000, SeekOrigin.Begin);
+                            CDReader cd = new CDReader(new OffsetStreamDecorator(isoStream), true, true);
+                            nextDescriptor += cd.ClusterSize * cd.TotalClusters;
+                            var files = cd.GetFiles("", "*.*", SearchOption.AllDirectories)
+                                .ToArray();
+
+                            foreach (var file in files)
+                            {
+                                yield return (cd.OpenFile(file, FileMode.Open), file);
+                            }
+                        } while (nextDescriptor != isoStream.Length);
+                    }
+                    break;
+                case FileType.TOC31_VOL:
+                case FileType.UNKNOWN:
+                case FileType.TOC22_VOL:
+                case FileType.GTPSP_VOL:
                 default:
                     throw new Exception("Invalid VOL type, can't get streams.");
             }

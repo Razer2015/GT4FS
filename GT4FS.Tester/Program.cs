@@ -45,6 +45,22 @@ namespace GT4FS.Tester
             public bool Verbose { get; set; }
         }
 
+        [Verb("iso", HelpText = "ISO tools.")]
+        class ISOOptions
+        {
+            [Option('r', "read", Required = true, HelpText = "Input file or directory to be processed (GRANTURISMO4.ISO file or extracted ISO directory).")]
+            public string Input { get; set; }
+
+            [Option('o', "output", Required = false, HelpText = "Directory to extract to (Default: extracted).")]
+            public string Output { get; set; }
+
+            [Option('f', "force", Required = false, HelpText = "Overwrite any files if they already exist when extracting?")]
+            public bool Overwrite { get; set; }
+
+            [Option('v', "verbose", Required = false, HelpText = "Set output to verbose messages.")]
+            public bool Verbose { get; set; }
+        }
+
         [Verb("pack", HelpText = "Pack GT4, GTHD, TT game content.")]
         class PackOptions
         {
@@ -73,9 +89,10 @@ namespace GT4FS.Tester
                 cmdWait = true;
             }
 
-            Parser.Default.ParseArguments<InfoOptions, ExtractOptions, PackOptions>(args)
+            Parser.Default.ParseArguments<InfoOptions, ISOOptions, ExtractOptions, PackOptions>(args)
                 .MapResult(
                 (InfoOptions opts) => RunInfoAndReturnExitCode(opts),
+                (ISOOptions opts) => RunISOAndReturnExitCode(opts),
                 (ExtractOptions opts) => RunAndReturnExitCode(opts),
                 (PackOptions opts) => RunPackAndReturnExitCode(opts),
                 errs => 1);
@@ -98,7 +115,7 @@ namespace GT4FS.Tester
                 {
                     case FileType.TOC31_VOL:
                     case FileType.TOC31_ISO:
-                        foreach (var (stream, fileName) in fileLoader.GetStreams())
+                        foreach (var (stream, fileName) in fileLoader.GetVOLStreams())
                         {
                             using (stream)
                             {
@@ -160,6 +177,83 @@ namespace GT4FS.Tester
             }
         }
 
+        private static object RunISOAndReturnExitCode(ISOOptions options)
+        {
+            try
+            {
+                FileAttributes attr = File.GetAttributes(options.Input);
+                // Check whether to extract ISO or pack ISO
+                if ((attr & FileAttributes.Directory) == FileAttributes.Directory) goto packISO;
+                else goto extractISO;
+
+                // Extract all the files in the ISO
+                extractISO:
+
+                // Output check
+                if (string.IsNullOrEmpty(options.Output))
+                {
+                    if ((attr & FileAttributes.Directory) == FileAttributes.Directory)
+                    {
+                        DirectoryInfo parentDir = Directory.GetParent(options.Input);
+                        options.Output = Path.Combine(parentDir.FullName, "isoextracted");
+                    }
+                    else
+                    {
+                        var folder = Path.GetDirectoryName(options.Input);
+                        options.Output = Path.Combine(folder, "isoextracted");
+                    }
+                }
+                var fileLoader = new FileLoader(options.Input);
+                var fileType = fileLoader.GetFileType();
+                foreach (var (stream, fileName) in fileLoader.GetStreams())
+                {
+                    using (stream)
+                    {
+                        var filePath = Path.Combine(options.Output, fileName.TrimStart('\\'));
+                        Directory.CreateDirectory(Path.GetDirectoryName(filePath));
+                        using var fileStream = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.Write, 4096);
+                        stream.CopyTo(fileStream);
+                    }
+                }
+                return 0;
+
+            // Pack all the files in the dir to ISO
+            packISO:
+                // Output check
+                if (string.IsNullOrEmpty(options.Output))
+                {
+                    if ((attr & FileAttributes.Directory) == FileAttributes.Directory)
+                    {
+                        DirectoryInfo parentDir = Directory.GetParent(options.Input);
+                        options.Output = Path.Combine(parentDir.FullName, $"GranTurismo4_{DateTime.Now.ToFileTimeUtc()}.ISO");
+                    }
+                    else
+                    {
+                        var folder = Path.GetDirectoryName(options.Input);
+                        options.Output = Path.Combine(folder, $"GranTurismo4_{DateTime.Now.ToFileTimeUtc()}.ISO");
+                    }
+                }
+                new FilePacker(options.Input)
+                    .WriteISO(options.Output);
+                return 0;
+            }
+            catch (ArgumentException aex)
+            {
+                Console.WriteLine(aex.Message);
+                return 1;
+            }
+            catch (InvalidFileSystemException fsex)
+            {
+                Console.WriteLine(fsex.Message);
+                return 1;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex);
+                return 1;
+            }
+        }
+
         private static object RunAndReturnExitCode(ExtractOptions options)
         {
             try
@@ -171,7 +265,7 @@ namespace GT4FS.Tester
                 {
                     case FileType.TOC31_VOL:
                     case FileType.TOC31_ISO:
-                        foreach (var (stream, fileName) in fileLoader.GetStreams())
+                        foreach (var (stream, fileName) in fileLoader.GetVOLStreams())
                         {
                             using (stream)
                             {
@@ -241,16 +335,15 @@ namespace GT4FS.Tester
                 return 1;
             }
 
-            uint offset = game switch
-            {
-                GameVolumeType.GTHD =>           0x800,
-                GameVolumeType.TT =>             0x1118800,
-                GameVolumeType.TT_DEMO =>        0x10AC800,
-                GameVolumeType.GT4 =>            0x10AC800,
-                GameVolumeType.GT4_MX5_DEMO =>   0x10AC800,
+            uint offset = game switch {
+                GameVolumeType.GTHD => 0x800,
+                GameVolumeType.TT => 0x1118800,
+                GameVolumeType.TT_DEMO => 0x10AC800,
+                GameVolumeType.GT4 => 0x10AC800,
+                GameVolumeType.GT4_MX5_DEMO => 0x10AC800,
                 GameVolumeType.GT4_FIRST_PREV => 0x10AC800,
-                GameVolumeType.GT4O =>           0x115B800,
-                GameVolumeType.CUSTOM =>         (uint)options.TocOffset,
+                GameVolumeType.GT4O => 0x115B800,
+                GameVolumeType.CUSTOM => (uint)options.TocOffset,
                 _ => 0x800,
             };
 
