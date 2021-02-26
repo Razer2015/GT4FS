@@ -6,7 +6,7 @@ using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
 
-namespace GT4FS.Core.Packing
+namespace GT4FS.Core
 {
     public class Utils
     {

@@ -4,7 +4,7 @@ using System.Text;
 
 using Syroot.BinaryData.Memory;
 
-namespace GT4FS.Core.Packing
+namespace GT4FS.Core.Entries
 {
     public class DirEntry : Entry
     {

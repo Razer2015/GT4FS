@@ -51,11 +51,14 @@ namespace GT4FS.Tester
             [Option('r', "read", Required = true, HelpText = "Input folder to be processed (folder to pack).")]
             public string Input { get; set; }
 
-            [Option('o', "output", Required = false, HelpText = "File to pack to (Default: GTNew.VOL).")]
+            [Option('o', "output", HelpText = "File to pack to (Default: GTNew.VOL).")]
             public string Output { get; set; } = "GTNew.VOL";
 
-            [Option('c', "cache", Required = false, HelpText = "Use cache.")]
-            public bool Cache { get; set; }
+            [Option('g', "game", Required = true, HelpText = "Target game to pack the volume for. Supported: GTHD.")]
+            public string GameType { get; set; }
+
+            [Option("toc-offset", HelpText = "Toc offset to use when packing as custom game type.")]
+            public int TocOffset { get; set; } = -1;
         }
 
         static void Main(string[] args)
@@ -231,9 +234,34 @@ namespace GT4FS.Tester
 
         private static object RunPackAndReturnExitCode(PackOptions options)
         {
+            if (!Enum.TryParse(options.GameType, out GameVolumeType game) || game is GameVolumeType.Unknown)
+            {
+                Console.WriteLine("Error: Invalid game type provided.");
+                return 1;
+            }
+
+            uint offset = game switch
+            {
+                GameVolumeType.GTHD =>           0x800,
+                GameVolumeType.TT =>             0x1118800,
+                GameVolumeType.TT_DEMO =>        0x10AC800,
+                GameVolumeType.GT4 =>            0x10AC800,
+                GameVolumeType.GT4_MX5_DEMO =>   0x10AC800,
+                GameVolumeType.GT4_FIRST_PREV => 0x10AC800,
+                GameVolumeType.GT4O =>           0x115B800,
+                GameVolumeType.CUSTOM =>         (uint)options.TocOffset,
+                _ => 0x800,
+            };
+
+            if (game == GameVolumeType.CUSTOM && options.TocOffset == -1)
+            {
+                Console.WriteLine("Error: No custom toc offset provided.");
+                return 1;
+            }
+
             var tocBuilder = new TocBuilder();
-            tocBuilder.RegisterFilesToPack(options.Input, options.Cache);
-            tocBuilder.Build(options.Output, 0x800);
+            tocBuilder.RegisterFilesToPack(options.Input);
+            tocBuilder.Build(options.Output, offset);
 
             return 0;
         }

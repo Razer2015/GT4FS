@@ -9,6 +9,7 @@ using System.Globalization;
 using System.Buffers.Binary;
 
 using GT.Shared;
+using GT4FS.Core.Entries;
 
 using Syroot.BinaryData;
 
@@ -18,7 +19,7 @@ namespace GT4FS.Core {
         private readonly Volume _volume;
         private readonly QueueWriter _queueWriter;
         public List<Node> Nodes { get; set; }
-        private IEnumerable<NodeEntry> _nodeEntries;
+        private IEnumerable<Entry> _nodeEntries;
 
         public BTree(Volume volume, ILogWriter logWriter = null)
         {
@@ -86,42 +87,47 @@ namespace GT4FS.Core {
             return true;
         }
 
-        private void TraverseNodes(IList<NodeEntry> nodeEntries, StreamWriter sw, uint parentNodeID, int depth, List<string> prefixFolders, bool debugInfo)
+        private void TraverseNodes(IList<Entry> nodeEntries, StreamWriter sw, uint parentNodeID, int depth, List<string> prefixFolders, bool debugInfo)
         {
             var nodes = nodeEntries.Where(x => x.ParentNode == parentNodeID);
             for (int i = 0; i < nodes.Count(); i++)
             {
                 var node = nodes.ElementAtOrDefault(i);
 
-                switch (node.Flag)
+                switch (node.EntryType)
                 {
                     case VolumeEntryType.Directory:
+                        DirEntry dir = node as DirEntry;
                         var folders = new List<string>(prefixFolders);
                         if (nodes.Count() - 1 > i)
                         {
-                            sw?.WriteLine($"{string.Join("", prefixFolders)}├── {node.Name} [ID: {node.NodeId} - P:{node.ParentNode}]");
+                            sw?.WriteLine($"{string.Join("", prefixFolders)}├── {node.Name} [ID: {dir.NodeID} - P:{node.ParentNode}]");
                             folders.Add("│   ");
                         }
                         else
                         {
-                            sw?.WriteLine($"{string.Join("", prefixFolders)}└── {node.Name} [ID: {node.NodeId} - P:{node.ParentNode}]");
+                            sw?.WriteLine($"{string.Join("", prefixFolders)}└── {node.Name} [ID: {dir.NodeID} - P:{node.ParentNode}]");
                             folders.Add("    ");
                         }
-                        TraverseNodes(nodeEntries, sw, node.NodeId, depth++, folders, debugInfo);
+                        TraverseNodes(nodeEntries, sw, (uint)dir.NodeID, depth++, folders, debugInfo);
                         break;
                     case VolumeEntryType.File: // File
-                    case VolumeEntryType.CompressedFile: // Compressed file
+                        var file = node as FileEntry;
                         if (nodes.Count() - 1 > i)
-                        {
-                            sw?.WriteLine($"{string.Join("", prefixFolders)}├── {node.Name}{(debugInfo ? $" [P:{node.ParentNode}] (Offset: 0x{_volume.GetFileOffset(node.PageOffset):X8} - Size: 0x{node.PackedSize:X8} - RealSize: 0x{node.RealSize:X8} - ModifiedDate: {node.ModifiedDate:s})" : "")}");
-                        }
+                            sw?.WriteLine($"{string.Join("", prefixFolders)}├── {node.Name}{(debugInfo ? $" [P:{node.ParentNode}] (Offset: 0x{_volume.GetFileOffset((uint)file.PageOffset):X8} - RealSize: 0x{file.Size:X8} - ModifiedDate: {file.ModifiedDate:s})" : "")}");
                         else
-                        {
-                            sw?.WriteLine($"{string.Join("", prefixFolders)}└── {node.Name}{(debugInfo ? $" [P:{node.ParentNode}] (Offset: 0x{_volume.GetFileOffset(node.PageOffset):X8} - Size: 0x{node.PackedSize:X8} - RealSize: 0x{node.RealSize:X8} - ModifiedDate: {node.ModifiedDate:s})" : "")}");
-                        }
+                            sw?.WriteLine($"{string.Join("", prefixFolders)}└── {node.Name}{(debugInfo ? $" [P:{node.ParentNode}] (Offset: 0x{_volume.GetFileOffset((uint)file.PageOffset):X8} - RealSize: 0x{file.Size:X8} - ModifiedDate: {file.ModifiedDate:s})" : "")}");
+                        break;
+                        
+                    case VolumeEntryType.CompressedFile: // Compressed file
+                        var cfile = node as CompressedFileEntry;
+                        if (nodes.Count() - 1 > i)
+                            sw?.WriteLine($"{string.Join("", prefixFolders)}├── {node.Name}{(debugInfo ? $" [P:{node.ParentNode}] (Offset: 0x{_volume.GetFileOffset((uint)cfile.PageOffset):X8} - Size: 0x{cfile.CompressedSize:X8} - RealSize: 0x{cfile.Size:X8} - ModifiedDate: {cfile.ModifiedDate:s})" : "")}");
+                        else
+                            sw?.WriteLine($"{string.Join("", prefixFolders)}└── {node.Name}{(debugInfo ? $" [P:{node.ParentNode}] (Offset: 0x{_volume.GetFileOffset((uint)cfile.PageOffset):X8} - Size: 0x{cfile.CompressedSize:X8} - RealSize: 0x{cfile.Size:X8} - ModifiedDate: {cfile.ModifiedDate:s})" : "")}");
                         break;
                     default:
-                        throw new ArgumentOutOfRangeException($"Unknown flag {node.Flag}");
+                        throw new ArgumentOutOfRangeException($"Unknown flag {node.EntryType}");
                 }
             }
         }
@@ -134,7 +140,7 @@ namespace GT4FS.Core {
                 Nodes.Add(new Node(buffer));
             }
 
-            _nodeEntries = Nodes.Where(x => x.Flag == 0).SelectMany(x => x.NodeEntries);
+            _nodeEntries = Nodes.Where(x => x.Flag != 0).SelectMany(x => x.NodeEntries);
         }
 
         private List<(string Path, long Offset, uint PackedSize, uint RealSize, DateTime ModifiedDate)> GetAllFiles()
@@ -143,15 +149,20 @@ namespace GT4FS.Core {
                 Read();
 
             var files = new List<(string Path, long Offset, uint PackedSize, uint RealSize, DateTime ModifiedDate)>();
-            foreach (var nodeEntry in _nodeEntries.Where(x => x.Flag != 0))
-                files.Add((BuildPath(nodeEntry), _volume.GetFileOffset(nodeEntry.PageOffset), nodeEntry.PackedSize, nodeEntry.RealSize, nodeEntry.ModifiedDate));
+            foreach (var nodeEntry in _nodeEntries.Where(x => x.EntryType != VolumeEntryType.Directory))
+            {
+                if (nodeEntry is FileEntry file)
+                    files.Add((BuildPath(nodeEntry), _volume.GetFileOffset((uint)file.PageOffset), (uint)file.Size, (uint)file.Size, file.ModifiedDate));
+                else if (nodeEntry is CompressedFileEntry cFile)
+                    files.Add((BuildPath(nodeEntry), _volume.GetFileOffset((uint)cFile.PageOffset), (uint)cFile.CompressedSize, (uint)cFile.Size, cFile.ModifiedDate));
+            }
 
             return files;
         }
 
-        private string BuildPath(NodeEntry nodeEntry)
+        private string BuildPath(Entry nodeEntry)
         {
-            return nodeEntry.ParentNode == 0 ? string.Empty : Path.Combine(BuildPath(_nodeEntries.FirstOrDefault(x => x.NodeId == nodeEntry.ParentNode)), nodeEntry.Name);
+            return nodeEntry.ParentNode == 0 ? string.Empty : Path.Combine(BuildPath(_nodeEntries.FirstOrDefault(x => x.NodeID == nodeEntry.ParentNode)), nodeEntry.Name);
         }
 
         private bool ExtractFile(BinaryStream reader, long offset, uint packedSize, uint realSize, DateTime modifiedDate, string destPath, out string sourcePath, bool overWrite)

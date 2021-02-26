@@ -5,7 +5,9 @@ using System.Diagnostics;
 
 using Syroot.BinaryData.Memory;
 
-namespace GT4FS.Core.Packing
+using GT4FS.Core;
+
+namespace GT4FS.Core.Entries
 {
     [DebuggerDisplay("{Name}")]
     public abstract class Entry
@@ -20,9 +22,6 @@ namespace GT4FS.Core.Packing
         public VolumeEntryType EntryType { get; set; }
 
         public int NodeID { get; set; }
-
-        public int EntryBlockIndex { get; set; }
-        public int EntryBlockOffset { get; set; }
 
         public abstract ushort GetTypeMetaSize();
         public abstract void SerializeTypeMeta(ref SpanWriter writer);

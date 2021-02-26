@@ -12,6 +12,7 @@ using Syroot.BinaryData;
 using Syroot.BinaryData.Memory;
 
 using GT4FS.Core.Packing;
+using GT4FS.Core.Entries;
 
 namespace GT4FS.Core
 {
@@ -20,15 +21,18 @@ namespace GT4FS.Core
     /// </summary>
     public class DebugReader
     {
+        public int TocOffset { get; set; }
+
         public BinaryStream VolumeStream { get; set; }
         public ushort BlockSize { get; set; } = 0x800;
         public ushort GetBlockSize()
             => BlockSize;
 
         // Non original, just to init it
-        public static DebugReader FromVolume(string volume)
+        public static DebugReader FromVolume(string volume, int tocOffset)
         {
             var debugReader = new DebugReader();
+            debugReader.TocOffset = tocOffset;
             var fs = new FileStream(volume, FileMode.Open);
             debugReader.VolumeStream = new BinaryStream(fs);
             return debugReader;
@@ -44,7 +48,7 @@ namespace GT4FS.Core
                 Debug.WriteLine($"Traversing: {part}, with parent node ID {parentID}");
                 entry = GetEntryOfPathPart(parentID, part, part.Length);
 
-                if (entry.EntryType == Packing.VolumeEntryType.File || entry.EntryType == Packing.VolumeEntryType.CompressedFile)
+                if (entry.EntryType == VolumeEntryType.File || entry.EntryType == VolumeEntryType.CompressedFile)
                     return entry;
 
                 parentID = entry.NodeID;
@@ -119,25 +123,25 @@ namespace GT4FS.Core
             {
                 int beginOffset = GetEntryOffsetSecure(index);
                 int endOffset = GetEntryOffsetSecure(index + 1);
-                return DecryptBlock(VolumeStream, 0x800 + beginOffset, endOffset - beginOffset);
+                return DecryptBlock(VolumeStream, TocOffset + beginOffset, endOffset - beginOffset);
             }
         }
 
         public int GetEntryOffset(int blockIndex)
         {
-            VolumeStream.Position = 0x800 + TocHeader.HeaderSize + (blockIndex * 4);
+            VolumeStream.Position = TocOffset + TocHeader.HeaderSize + (blockIndex * 4);
             return VolumeStream.ReadInt32();
         }
 
         public int GetEntryOffsetSecure(int blockIndex)
         {
-            VolumeStream.Position = 0x800 + TocHeader.HeaderSize + (blockIndex * 4);
+            VolumeStream.Position = TocOffset + TocHeader.HeaderSize + (blockIndex * 4);
             return VolumeStream.ReadInt32() ^ blockIndex * Volume.OffsetCryptKey + Volume.OffsetCryptKey;
         }
 
         public bool IsSoFS()
         {
-            VolumeStream.Position = 0x800;
+            VolumeStream.Position = TocOffset;
             return VolumeStream.ReadInt32(ByteConverter.Big) == TocHeader.MagicValue;
         }
 
@@ -214,7 +218,7 @@ namespace GT4FS.Core
         // Non original
         public void DebugWriteEntryInfos()
         {
-            VolumeStream.Position = 0x800 + 0x12;
+            VolumeStream.Position = TocOffset + 0x12;
             ushort blockCount = VolumeStream.ReadUInt16();
 
             using var sw = new StreamWriter("block_info.txt");
@@ -244,7 +248,12 @@ namespace GT4FS.Core
                         sr.Endian = Syroot.BinaryData.Core.Endian.Big;
                         int parentNode = sr.ReadInt32();
                         sr.Endian = Syroot.BinaryData.Core.Endian.Little;
-                        string str = sr.ReadStringRaw(entryLen - 4);
+
+                        string str;
+                        if (entryLen >= 4)
+                            str = sr.ReadStringRaw(entryLen - 4);
+                        else
+                            str = "string was null";
 
                         sw.WriteLine($"{j} -> Offset: {entryOffset:X2} - Length: {entryLen} - Points to Block: {blockIndex} | ParentNode: {parentNode}, Name: {str}");
                     }
@@ -267,6 +276,9 @@ namespace GT4FS.Core
                 sw.WriteLine();
             }
         }
+
+        public void Close()
+            => VolumeStream?.Dispose();
     }
 
     public class BlockInfo

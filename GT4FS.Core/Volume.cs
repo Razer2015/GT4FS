@@ -179,4 +179,17 @@ namespace GT4FS.Core {
             }
         }
     }
+
+    public enum GameVolumeType
+    {
+        GTHD,
+        GT4,
+        GT4_MX5_DEMO,
+        GT4_FIRST_PREV,
+        GT4O,
+        TT,
+        TT_DEMO,
+        CUSTOM,
+        Unknown,
+    }
 }
