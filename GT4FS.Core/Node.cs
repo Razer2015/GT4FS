@@ -3,6 +3,7 @@ using System.IO;
 using System.Text;
 
 using Syroot.BinaryData;
+using Syroot.BinaryData.Core;
 using Syroot.BinaryData.Memory;
 
 using GT.Shared.Polyphony;
@@ -39,35 +40,31 @@ namespace GT4FS.Core
             if (Flag != 0)
                 return;
 
-            for (var i = 0; i < EntryCount / 2; i++)
+            int blockEndPos = _data.Length;
+            int realEntryCount = EntryCount / 2;
+            for (var i = 0; i < realEntryCount; i++)
             {
+                reader.Position = blockEndPos - ((i * 0x08) + 0x08);
+
+                short entryOffset = reader.ReadInt16();
+                short entryLength = reader.ReadInt16();
+                short entryTypeMetaOffset = reader.ReadInt16();
+                short entryTypeMetaLength = reader.ReadInt16();
+
+                reader.Position = entryOffset;
+
+                reader.Endian = Endian.Big;
                 int parentID = reader.ReadInt32();
-                string name = ReadName(ref reader);
+                reader.Endian = Endian.Little;
+
+                string name = reader.ReadStringRaw(entryLength - 4);
+
+                reader.Position = entryTypeMetaOffset;
                 var entry = Entry.ReadEntryFromBuffer(ref reader);
                 entry.Name = name;
                 entry.ParentNode = parentID;
                 NodeEntries.Add(entry);
-                reader.Align(0x04);
             }
-        }
-
-        private static string ReadName(ref SpanReader reader)
-        {
-            var sb = new StringBuilder();
-
-            // TODO: actually use the block's toc for this..
-            while (true)
-            {
-                char c = (char)reader.ReadByte();
-                if ((byte)c <= 2)
-                    break;
-                sb.Append(c);
-            }
-
-            reader.Position--;
-            reader.Align(0x04);
-
-            return sb.ToString();
         }
     }
 }
