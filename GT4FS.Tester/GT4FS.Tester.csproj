@@ -15,9 +15,5 @@
       <Project>{38285c77-4879-4637-9200-dbd12a463aae}</Project>
       <Name>GT4FS.Core</Name>
     </ProjectReference>
-    <ProjectReference Include="..\GTShared\GT.Shared\GT.Shared.csproj">
-      <Project>{461BD7D6-DA21-4C8B-821E-DA71F1E708D2}</Project>
-      <Name>GT.Shared</Name>
-    </ProjectReference>
   </ItemGroup>
 </Project>

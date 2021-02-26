@@ -3,11 +3,11 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 16
 VisualStudioVersion = 16.0.29009.5
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GT4FS.Tester", "GT4FS.Tester\GT4FS.Tester.csproj", "{420D5C9C-8A88-445C-B810-1B0CCA1FD34D}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "GT4FS.Tester", "GT4FS.Tester\GT4FS.Tester.csproj", "{420D5C9C-8A88-445C-B810-1B0CCA1FD34D}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GT4FS.Core", "GT4FS.Core\GT4FS.Core.csproj", "{38285C77-4879-4637-9200-DBD12A463AAE}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "GT4FS.Core", "GT4FS.Core\GT4FS.Core.csproj", "{38285C77-4879-4637-9200-DBD12A463AAE}"
 EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "GT.Shared", "GTShared\GT.Shared\GT.Shared.csproj", "{461BD7D6-DA21-4C8B-821E-DA71F1E708D2}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "GT.Shared", "GT.Shared\GT.Shared.csproj", "{51E52AEC-9774-4697-ABB0-B2E7BEA0D3B5}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -23,10 +23,10 @@ Global
 		{38285C77-4879-4637-9200-DBD12A463AAE}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{38285C77-4879-4637-9200-DBD12A463AAE}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{38285C77-4879-4637-9200-DBD12A463AAE}.Release|Any CPU.Build.0 = Release|Any CPU
-		{461BD7D6-DA21-4C8B-821E-DA71F1E708D2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{461BD7D6-DA21-4C8B-821E-DA71F1E708D2}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{461BD7D6-DA21-4C8B-821E-DA71F1E708D2}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{461BD7D6-DA21-4C8B-821E-DA71F1E708D2}.Release|Any CPU.Build.0 = Release|Any CPU
+		{51E52AEC-9774-4697-ABB0-B2E7BEA0D3B5}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{51E52AEC-9774-4697-ABB0-B2E7BEA0D3B5}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{51E52AEC-9774-4697-ABB0-B2E7BEA0D3B5}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{51E52AEC-9774-4697-ABB0-B2E7BEA0D3B5}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

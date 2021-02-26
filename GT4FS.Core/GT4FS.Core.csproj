@@ -19,7 +19,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\GTShared\GT.Shared\GT.Shared.csproj" />
+    <ProjectReference Include="..\GT.Shared\GT.Shared.csproj" />
   </ItemGroup>
 
 </Project>
