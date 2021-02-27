@@ -7,6 +7,8 @@ using System.Text;
 using System.Buffers;
 using System.Buffers.Binary;
 
+using ICSharpCode.SharpZipLib.Zip.Compression;
+
 namespace GT.Shared.Helpers
 {
     public static class Compression
@@ -43,6 +45,8 @@ namespace GT.Shared.Helpers
             Span<byte> header = stackalloc byte[8];
             BinaryPrimitives.WriteUInt32BigEndian(header, 0xC5EEF7FFu);
             BinaryPrimitives.WriteInt32LittleEndian(header[4..], -(int)input.Length);
+
+            
             output.Write(header);
             
             input.Position = 0;
@@ -51,12 +55,21 @@ namespace GT.Shared.Helpers
             input.CopyTo(ms);
             ms.Position = 0;
 
+            /* As always, for some reason, default deflate stream seems to cause issues with the game..
             using (var dstream = new DeflateStream(output, CompressionMode.Compress, leaveOpen: true))
                 dstream.Write(inputBytes, 0, (int)input.Length);
+            */
+
+            var d = new Deflater(Deflater.DEFAULT_COMPRESSION, true);
+            d.SetInput(inputBytes);
+            d.Finish();
+
+            int count = d.Deflate(inputBytes);
+            output.Write(inputBytes, 0, count);
 
             ArrayPool<byte>.Shared.Return(inputBytes);
 
-            return output.Position - basePos;
+            return count + 8; // output.Position - basePos;
         }
     }
 }

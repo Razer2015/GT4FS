@@ -62,7 +62,7 @@ namespace GT4FS.Core.Packing
         public void RegisterFilesToPack(string inputFolder)
         {
             Console.WriteLine("Indexing folder to prepare to pack..");
-            InputFolder = inputFolder;
+            InputFolder = Path.GetFullPath(inputFolder);
 
             RootTree = new DirEntry(".");
             RootTree.NodeID = CurrentID++;
@@ -117,10 +117,10 @@ namespace GT4FS.Core.Packing
                 // We've got enough to build the header and merge blocks together now
                 BuildTocHeader(volStream);
 
-
-                Console.WriteLine("Merging data and toc...");
                 // Merge toc and file blob.
                 using var fs = new FileStream("gtfiles.temp", FileMode.Open);
+                Console.WriteLine($"Merging Data and Toc... ({Utils.BytesToString(fs.Length)})");
+
                 int count = 0;
                 byte[] buffer = new byte[32_768];
                 while ((count = fs.Read(buffer, 0, buffer.Length)) > 0)
@@ -192,43 +192,54 @@ namespace GT4FS.Core.Packing
             using var fs = new FileStream("gtfiles.temp", FileMode.Create);
             using var bs = new BinaryStream(fs);
 
-            WriteDirectory(bs, RootTree, "");
+            int i = 1;
+            int count = _entries.Count(c => c.EntryType != VolumeEntryType.Directory);
+
+            WriteDirectory(bs, RootTree, "", ref i, ref count);
         }
 
-        private void WriteDirectory(BinaryStream fileWriter, DirEntry parentDir, string path)
+        private void WriteDirectory(BinaryStream fileWriter, DirEntry parentDir, string path, ref int currentIndex, ref int count)
         {
             foreach (var entry in parentDir.ChildEntries)
             {
                 if (entry.EntryType == VolumeEntryType.Directory)
                 {
                     string subPath = string.IsNullOrEmpty(path) ? entry.Name : $"{path}/{entry.Name}";
-                    WriteDirectory(fileWriter, (DirEntry)entry, subPath);
+                    WriteDirectory(fileWriter, (DirEntry)entry, subPath, ref currentIndex, ref count);
                 }
                 else
                 {
                     string filePath = string.IsNullOrEmpty(path) ? entry.Name : $"{path}/{entry.Name}";
 
+                    int entrySize = 0;
                     if (entry.EntryType == VolumeEntryType.File)
+                    {
+                        entrySize = ((FileEntry)entry).Size;
                         ((FileEntry)entry).PageOffset = (int)Math.Round((double)(fileWriter.Position / BlockSize), MidpointRounding.AwayFromZero);
+                    }
                     else if (entry.EntryType == VolumeEntryType.CompressedFile)
+                    {
+                        entrySize = ((CompressedFileEntry)entry).Size;
                         ((CompressedFileEntry)entry).PageOffset = (int)Math.Round((double)(fileWriter.Position / BlockSize), MidpointRounding.AwayFromZero);
+                    }
 
                     using var file = File.Open(Path.Combine(InputFolder, filePath), FileMode.Open);
 
                     if (entry.EntryType == VolumeEntryType.CompressedFile)
                     {
-                        Console.WriteLine($"Compressing: {filePath}");
+                        Console.WriteLine($"Compressing: {filePath} [{Utils.BytesToString(entrySize)}] ({currentIndex}/{count})");
                         long compressedSize = Compression.PS2ZIPCompressInto(file, fileWriter);
 
                         ((CompressedFileEntry)entry).CompressedSize = (int)compressedSize;
                     }
                     else
                     {
-                        Console.WriteLine($"Writing: {filePath}");
+                        Console.WriteLine($"Writing: {filePath} [{Utils.BytesToString(entrySize)}] ({currentIndex}/{count})");
                         file.CopyTo(fileWriter);
                     }
 
                     fileWriter.Align(BlockSize, grow: true);
+                    currentIndex++;
                 }
             }
         }
@@ -452,13 +463,23 @@ namespace GT4FS.Core.Packing
                     Import((DirEntry)entry, path);
                 }
                 else
-                {
-                    entry = new FileEntry(relativePath);
+                {                    
                     string absolutePath = Path.Combine(folder, relativePath);
-                    var fInfo = new FileInfo(absolutePath);
+                    string volumePath = absolutePath.Substring(InputFolder.Length + 1);
 
-                    ((FileEntry)entry).Size = (int)fInfo.Length;
-                    ((FileEntry)entry).ModifiedDate = fInfo.LastWriteTimeUtc;
+                    var fInfo = new FileInfo(absolutePath);
+                    if (IsCompressedVolumeFile(volumePath))
+                    {
+                        entry = new CompressedFileEntry(relativePath);
+                        ((CompressedFileEntry)entry).Size = (int)fInfo.Length;
+                        ((CompressedFileEntry)entry).ModifiedDate = fInfo.LastWriteTimeUtc;
+                    }
+                    else
+                    {
+                        entry = new FileEntry(relativePath);
+                        ((FileEntry)entry).Size = (int)fInfo.Length;
+                        ((FileEntry)entry).ModifiedDate = fInfo.LastWriteTimeUtc;
+                    }
                     entry.NodeID = CurrentID++;
                 }
 
@@ -466,6 +487,38 @@ namespace GT4FS.Core.Packing
                 parent.ChildEntries.Add(entry);
             }
         }
+
+        private bool IsCompressedVolumeFile(string file)
+        {
+            // Main folders that arent compressed - GT4
+            if (file.StartsWith("bgm") || file.StartsWith("cameras")
+                || file.StartsWith("description") || file.StartsWith("dnas") || file.StartsWith("icon")
+                || file.StartsWith("music") || file.StartsWith("printer") || file.StartsWith("sound") || file.StartsWith("text"))
+                return false;
+
+            // GTHD
+            if (file.StartsWith("carsound") || file.StartsWith("movie") || file.StartsWith("rtext") || file.StartsWith("sound_gt"))
+                return false;
+            if (file.EndsWith(".mproject"))
+                return false;
+
+            // Some gpbs in adhoc projects
+            if (file.StartsWith("projects")) 
+            {
+                if (file.Contains("eyetoy") || file.Contains("language") || 
+                    file.Contains("quick") || file.Contains("quick-arcade") ||
+                    file.Contains("option") || file.Contains("gtmode"))
+                    return !file.EndsWith(".gpb");
+
+                return true;
+            }
+
+            if (file.StartsWith("menu/pause") || file.StartsWith("menu/replay_panel"))
+                return !file.EndsWith(".pmb");
+
+            return true;
+        }
+
 
         /// <summary>
         /// Builds the 2D representation of the file system, for packing.
