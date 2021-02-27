@@ -61,7 +61,7 @@ namespace GT4FS.Core.Packing
 
         public void RegisterFilesToPack(string inputFolder)
         {
-            Console.WriteLine("Indexing folder to prepare to pack..");
+            Console.WriteLine($"Indexing '{Path.GetFullPath(inputFolder)}' to find files to pack.. ");
             InputFolder = Path.GetFullPath(inputFolder);
 
             RootTree = new DirEntry(".");
@@ -71,6 +71,8 @@ namespace GT4FS.Core.Packing
 
             Import(RootTree, InputFolder);
             TraverseBuildEntryPackList(RootTree);
+
+            Console.WriteLine($"Found {_entries.Count(e => e.EntryType != VolumeEntryType.Directory)} files to pack.");
         }
 
         /// <summary>
@@ -92,6 +94,8 @@ namespace GT4FS.Core.Packing
             volStream.BaseStream.Seek(BaseRealTocOffset, SeekOrigin.Begin);
 
             BuildRealTOC(volStream);
+
+            Console.WriteLine($"Done, folder packed to {Path.GetFullPath(outputFile)}.");
         }
 
         /// <summary>
@@ -119,7 +123,7 @@ namespace GT4FS.Core.Packing
 
                 // Merge toc and file blob.
                 using var fs = new FileStream("gtfiles.temp", FileMode.Open);
-                Console.WriteLine($"Merging Data and Toc... ({Utils.BytesToString(fs.Length)})");
+                Console.WriteLine($"Merging Data and ToC... ({Utils.BytesToString(fs.Length)})");
 
                 int count = 0;
                 byte[] buffer = new byte[32_768];
@@ -135,8 +139,6 @@ namespace GT4FS.Core.Packing
                 if (File.Exists("gtfiles.temp"))
                     File.Delete("gtfiles.temp");
             }
-
-            Console.WriteLine("Done.");
         }
 
         private void BuildTocHeader(BinaryStream volStream)
