@@ -12,6 +12,7 @@ using Syroot.BinaryData.Core;
 using Syroot.BinaryData.Memory;
 
 using GT.Shared;
+using GT.Shared.Helpers;
 using GT4FS.Core;
 using GT4FS.Core.Entries;
 
@@ -117,7 +118,7 @@ namespace GT4FS.Core.Packing
                 BuildTocHeader(volStream);
 
 
-                Console.WriteLine("[*] Merging data and toc...");
+                Console.WriteLine("Merging data and toc...");
                 // Merge toc and file blob.
                 using var fs = new FileStream("gtfiles.temp", FileMode.Open);
                 int count = 0;
@@ -206,14 +207,27 @@ namespace GT4FS.Core.Packing
                 else
                 {
                     string filePath = string.IsNullOrEmpty(path) ? entry.Name : $"{path}/{entry.Name}";
-                    Console.WriteLine($"Writing: {filePath}");
 
-                    ((FileEntry)entry).PageOffset = (int)Math.Round((double)(fileWriter.Position / BlockSize), MidpointRounding.AwayFromZero);
+                    if (entry.EntryType == VolumeEntryType.File)
+                        ((FileEntry)entry).PageOffset = (int)Math.Round((double)(fileWriter.Position / BlockSize), MidpointRounding.AwayFromZero);
+                    else if (entry.EntryType == VolumeEntryType.CompressedFile)
+                        ((CompressedFileEntry)entry).PageOffset = (int)Math.Round((double)(fileWriter.Position / BlockSize), MidpointRounding.AwayFromZero);
 
-                    var file = File.ReadAllBytes(Path.Combine(InputFolder, filePath));
-                    
-                    //var fileComp = PS2Zip.ZlibCodecCompress(file);
-                    fileWriter.Write(file);
+                    using var file = File.Open(Path.Combine(InputFolder, filePath), FileMode.Open);
+
+                    if (entry.EntryType == VolumeEntryType.CompressedFile)
+                    {
+                        Console.WriteLine($"Compressing: {filePath}");
+                        long compressedSize = Compression.PS2ZIPCompressInto(file, fileWriter);
+
+                        ((CompressedFileEntry)entry).CompressedSize = (int)compressedSize;
+                    }
+                    else
+                    {
+                        Console.WriteLine($"Writing: {filePath}");
+                        file.CopyTo(fileWriter);
+                    }
+
                     fileWriter.Align(BlockSize, grow: true);
                 }
             }

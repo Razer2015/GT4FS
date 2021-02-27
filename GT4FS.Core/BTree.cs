@@ -176,7 +176,18 @@ namespace GT4FS.Core {
                 Directory.CreateDirectory(Path.GetDirectoryName(destPath) ?? throw new InvalidOperationException());
                 reader.BaseStream.Position = offset;
                 var data = reader.ReadBytes((int)packedSize);
-                if (data.Length > 4 && BinaryPrimitives.ReadUInt32BigEndian(data.AsSpan(0, 4)) == 0xC5EEF7FFu)
+
+                /* Apparently we're just going to check if its 0 as net core isn't cooperating
+                 *  BinaryPrimitives.ReadUInt32BigEndian(data.AsSpan(0, 4))
+                 *  -> 0xc5eef7ff
+                 *  (uint)BinaryPrimitives.ReadUInt32BigEndian(data.AsSpan(0, 4)) == 0xC5EEF7FFu
+                 *  -> false
+                 *  (int)BinaryPrimitives.ReadUInt32BigEndian(data.AsSpan(0, 4)) == (int)0xC5EEF7FFu
+                 *  -> false
+                 *  BinaryPrimitives.ReadUInt32BigEndian(data.AsSpan(0, 4)) - 0xC5EEF7FFu
+                 *  -> 0x00000000
+                */
+                if (data.Length > 4 && BinaryPrimitives.ReadUInt32BigEndian(data.AsSpan(0, 4)) - 0xC5EEF7FFu == 0)
                     data = PS2Zip.Inflate(data);
 
                 Debug.Assert(data.Length == realSize);

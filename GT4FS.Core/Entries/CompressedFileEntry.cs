@@ -17,7 +17,7 @@ namespace GT4FS.Core.Entries
         public CompressedFileEntry(string name)
         { 
             Name = name;
-            EntryType = VolumeEntryType.File;
+            EntryType = VolumeEntryType.CompressedFile;
         }
 
         public override ushort GetTypeMetaSize()
