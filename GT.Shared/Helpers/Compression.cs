@@ -61,7 +61,7 @@ namespace GT.Shared.Helpers
             */
 
             var d = new Deflater(Deflater.DEFAULT_COMPRESSION, true);
-            d.SetInput(inputBytes);
+            d.SetInput(inputBytes, 0, (int)input.Length);
             d.Finish();
 
             int count = d.Deflate(inputBytes);
@@ -69,7 +69,7 @@ namespace GT.Shared.Helpers
 
             ArrayPool<byte>.Shared.Return(inputBytes);
 
-            return count + 8; // output.Position - basePos;
+            return output.Position - basePos; // output.Position - basePos;
         }
     }
 }

@@ -233,6 +233,9 @@ namespace GT4FS.Core
                 int realEntryCount = (entryCount / 2);
 
                 sw.WriteLine($"Block #{i} {(blockType == 1 ? "[INDEXER]" : "")} - {entryCount} entries [{realEntryCount} actual]");
+                sr.Position = BlockSize - (realEntryCount * 0x08);
+                sr.Position -= 4;
+                sw.WriteLine($"Unk: {sr.ReadInt32()}");
 
                 for (int j = 0; j < realEntryCount; j++)
                 {

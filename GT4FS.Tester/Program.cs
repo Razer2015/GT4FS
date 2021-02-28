@@ -235,21 +235,22 @@ namespace GT4FS.Tester
 
         private static object RunPackAndReturnExitCode(PackOptions options)
         {
+
             if (!Enum.TryParse(options.GameType, out GameVolumeType game) || game is GameVolumeType.Unknown)
             {
                 Console.WriteLine("Error: Invalid game type provided.");
                 return 1;
             }
 
-            uint offset = game switch
+            uint tocOffset = game switch
             {
-                GameVolumeType.GTHD =>           0x800,
-                GameVolumeType.TT =>             0x1118800,
-                GameVolumeType.TT_DEMO =>        0x10AC800,
-                GameVolumeType.GT4 =>            0x10AC800,
-                GameVolumeType.GT4_MX5_DEMO =>   0x10AC800,
-                GameVolumeType.GT4_FIRST_PREV => 0x10AC800,
-                GameVolumeType.GT4O =>           0x115B800,
+                GameVolumeType.GTHD =>           0x1    * Volume.DefaultBlockSize,
+                GameVolumeType.TT =>             0x2231 * Volume.DefaultBlockSize,
+                GameVolumeType.TT_DEMO =>        0x2159 * Volume.DefaultBlockSize,
+                GameVolumeType.GT4 =>            0x2159 * Volume.DefaultBlockSize,
+                GameVolumeType.GT4_MX5_DEMO =>   0x2159 * Volume.DefaultBlockSize,
+                GameVolumeType.GT4_FIRST_PREV => 0x2159 * Volume.DefaultBlockSize,
+                GameVolumeType.GT4O =>           0x22B7 * Volume.DefaultBlockSize,
                 GameVolumeType.CUSTOM =>         (uint)options.TocOffset,
                 _ => 0x800,
             };
@@ -262,7 +263,7 @@ namespace GT4FS.Tester
 
             var tocBuilder = new TocBuilder();
             tocBuilder.RegisterFilesToPack(options.Input);
-            tocBuilder.Build(options.Output, offset);
+            tocBuilder.Build(options.Output, tocOffset);
 
             return 0;
         }

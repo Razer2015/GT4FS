@@ -504,6 +504,10 @@ namespace GT4FS.Core.Packing
             if (file.EndsWith(".mproject"))
                 return false;
 
+            // TT
+            if (file.StartsWith("motosound") || (file.StartsWith("mpeg") && !file.EndsWith("course.ipic")))
+                return false;
+
             // Some gpbs in adhoc projects
             if (file.StartsWith("projects")) 
             {

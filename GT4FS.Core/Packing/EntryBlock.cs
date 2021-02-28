@@ -26,7 +26,7 @@ namespace GT4FS.Core.Packing
         {
             BlockSize = blockSize;
             Buffer = new byte[BlockSize];
-            _spaceLeft = blockSize - HeaderSize - 4; // Account for the int at the begining of the bottom toc
+            _spaceLeft = blockSize - HeaderSize - 8; // Account for the int at the begining of the bottom toc
 
             LastPosition = HeaderSize;
         }
@@ -34,7 +34,7 @@ namespace GT4FS.Core.Packing
         public bool HasSpaceToWriteEntry(Entry entry)
         {
             int entrySize = entry.GetTotalSize(LastPosition);
-            return entrySize + TocEntrySize < _spaceLeft;   
+            return entrySize + TocEntrySize <= _spaceLeft;   
         }
 
         public void WriteEntry(Entry entry)
