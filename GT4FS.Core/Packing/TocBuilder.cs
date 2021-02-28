@@ -229,14 +229,16 @@ namespace GT4FS.Core.Packing
 
                     if (entry.EntryType == VolumeEntryType.CompressedFile)
                     {
-                        Console.WriteLine($"Compressing: {filePath} [{Utils.BytesToString(entrySize)}] ({currentIndex}/{count})");
+                        if (entrySize >= 1_024_000)
+                            Console.WriteLine($"Compressing: {filePath} [{Utils.BytesToString(entrySize)}] ({currentIndex}/{count})");
                         long compressedSize = Compression.PS2ZIPCompressInto(file, fileWriter);
 
                         ((CompressedFileEntry)entry).CompressedSize = (int)compressedSize;
                     }
                     else
                     {
-                        Console.WriteLine($"Writing: {filePath} [{Utils.BytesToString(entrySize)}] ({currentIndex}/{count})");
+                        if (entrySize >= 1_024_000)
+                            Console.WriteLine($"Writing: {filePath} [{Utils.BytesToString(entrySize)}] ({currentIndex}/{count})");
                         file.CopyTo(fileWriter);
                     }
 
