@@ -9,6 +9,12 @@
 
 	<PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' " />
 	<PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' " />
+
+	<!-- Needed for Iconic.Zlib.Netstandard -->
+	<PropertyGroup>
+		<NoWarn>$(NoWarn);NU1605</NoWarn>
+	</PropertyGroup>
+	
 	<ItemGroup>
 	  <PackageReference Include="CommandLineParser" Version="2.8.0" />
 	</ItemGroup>

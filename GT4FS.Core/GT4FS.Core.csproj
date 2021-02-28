@@ -12,6 +12,11 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
+  <!-- Needed for Iconic.Zlib.Netstandard -->
+  <PropertyGroup>
+	<NoWarn>$(NoWarn);NU1605</NoWarn>
+  </PropertyGroup>
+	
   <ItemGroup>
     <PackageReference Include="Iconic.Zlib.Netstandard" Version="1.0.0" />
     <PackageReference Include="Syroot.BinaryData" Version="5.2.2" />
