@@ -230,7 +230,7 @@ namespace GT4FS.Core.Packing
 
                     if (entry.EntryType == VolumeEntryType.CompressedFile)
                     {
-                        if (fileSize >= 1_024_000 || count % 100 == 0)
+                        if (fileSize >= 1_024_000 || currentIndex % 100 == 0)
                             Console.WriteLine($"Compressing: {filePath} [{Utils.BytesToString(fileSize)}] ({currentIndex}/{count})");
                         long compressedSize = Compression.PS2ZIPCompressInto(file, fileWriter);
 
@@ -238,7 +238,7 @@ namespace GT4FS.Core.Packing
                     }
                     else
                     {
-                        if (fileSize >= 1_024_000 || count % 100 == 0)
+                        if (fileSize >= 1_024_000 || currentIndex % 100 == 0)
                             Console.WriteLine($"Writing: {filePath} [{Utils.BytesToString(fileSize)}] ({currentIndex}/{count})");
                         file.CopyTo(fileWriter);
                     }
@@ -350,6 +350,8 @@ namespace GT4FS.Core.Packing
             if (_mainIndexBlock != null)
             {
                 SpanWriter sw = new SpanWriter(_mainIndexBlock.Buffer);
+
+                // This will include the terminator
                 for (int i = 0; i < _indexBlocks.Count; i++)
                 {
                     var indexBlock = _indexBlocks[i];
@@ -371,6 +373,11 @@ namespace GT4FS.Core.Packing
                     sw.Position += 4;
                     sw.WriteInt32(pageIndex + 1 + j);
                 }
+
+                // Write last block terminator
+                sw.Position = BlockSize - ((indexBlock.EntryCount + 1) * 0x08);
+                sw.Position += 4;
+                sw.WriteInt32(pageIndex + indexBlock.EntryCount + 1);
             }
         }
 

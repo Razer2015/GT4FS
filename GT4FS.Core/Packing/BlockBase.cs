@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using System.Buffers.Binary;
 
 using Syroot.BinaryData.Core;
 using Syroot.BinaryData;
@@ -28,32 +29,14 @@ namespace GT4FS.Core.Packing
         public int EntryCount { get; set; }
         protected int _spaceLeft;
 
-        public void FinalizeHeader()
-        {
-            var blockWriter = new SpanWriter(Buffer);
-            blockWriter.Position = LastPosition;
-
-            // Write up the block info - write what we can write - the entry count
-            blockWriter.Position = 0;
-            blockWriter.WriteUInt16((ushort)Type);
-            blockWriter.WriteUInt16((ushort)((EntryCount * 2) + 1));
-        }
+        public abstract void FinalizeHeader();
 
         public void WriteNextPage(int next)
-        {
-            SpanWriter blockWriter = new SpanWriter(Buffer);
-            blockWriter.Position = 0x04;
-
-            blockWriter.WriteInt32(next);
-        }
+            => BinaryPrimitives.WriteInt32LittleEndian(Buffer.AsSpan()[4..], next);
 
         public void WritePreviousPage(int previous)
-        {
-            SpanWriter blockWriter = new SpanWriter(Buffer);
-            blockWriter.Position = 0x08;
+            => BinaryPrimitives.WriteInt32LittleEndian(Buffer.AsSpan()[8..], previous);
 
-            blockWriter.WriteInt32(previous);
-        }
 
         public enum BlockType : ushort
         {

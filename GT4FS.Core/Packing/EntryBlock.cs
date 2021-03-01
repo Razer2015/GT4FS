@@ -75,5 +75,22 @@ namespace GT4FS.Core.Packing
             // Move on to next.
             EntryCount++;
         }
+
+        public override void FinalizeHeader()
+        {
+            var blockWriter = new SpanWriter(Buffer);
+            blockWriter.Position = LastPosition;
+
+            // Write up the block info - write what we can write - the entry count
+            blockWriter.Position = 0;
+            blockWriter.WriteUInt16((ushort)Type);
+            blockWriter.WriteUInt16((ushort)((EntryCount * 2) + 1));
+
+            // Write end offset terminator - skip to last of block toc and write it behind it
+            blockWriter.Position = BlockSize - (EntryCount * 0x08);
+            blockWriter.Position -= 2;
+            blockWriter.WriteInt16((short)LastPosition);
+
+        }
     }
 }

@@ -70,11 +70,8 @@ namespace GT4FS.Core.Packing
 
             // Begin to write the entry's common information
             int entryOffset = blockWriter.Position;
-            blockWriter.Endian = Endian.Big;
-            blockWriter.WriteInt32(firstNextBlockEntry.ParentNode);
-            blockWriter.Endian = Endian.Little;
             blockWriter.WriteBytes(indexer);
-            blockWriter.Align(0x04); // String is aligned
+            blockWriter.Align(0x04); // Entry is aligned
 
             int endPos = blockWriter.Position;
 
@@ -92,13 +89,24 @@ namespace GT4FS.Core.Packing
             LastPosition = endPos;
         }
 
-        /// <summary>
-        /// Measures how much space one entry will take (Toc entry excluded).
-        /// </summary>
-        /// <param name="baseOffset"></param>
-        /// <param name="name"></param>
-        /// <returns></returns>
-        private ushort MeasureEntrySize(int baseOffset, byte[] indexer)
+        public override void FinalizeHeader()
+        {
+            var blockWriter = new SpanWriter(Buffer);
+            blockWriter.Position = LastPosition;
+
+            // Write up the block info - write what we can write - the entry count
+            blockWriter.Position = 0;
+            blockWriter.WriteUInt16((ushort)Type);
+            blockWriter.WriteUInt16((ushort)((EntryCount * 2) + 1));
+        }
+
+    /// <summary>
+    /// Measures how much space one entry will take (Toc entry excluded).
+    /// </summary>
+    /// <param name="baseOffset"></param>
+    /// <param name="name"></param>
+    /// <returns></returns>
+    private ushort MeasureEntrySize(int baseOffset, byte[] indexer)
         {
             int newOffset = baseOffset;
             newOffset += indexer.Length;
