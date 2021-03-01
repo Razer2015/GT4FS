@@ -55,7 +55,7 @@ namespace GT4FS.Tester
             public string Output { get; set; } = "GTNew.VOL";
 
             [Option('g', "game", Required = true, HelpText = "Target game to pack the volume for. " +
-                "Supported: GT4, TT, GTHD, TT_DEMO, GT4_MX5_DEMO, GT4_FIRST_PREV, GT4O or CUSTOM for a custom one (use --toc-offset).")]
+                "Supported: GT4, TT, GTHD, TT_DEMO, GT4_MX5_DEMO, GT4_FIRST_PREV, GT4_ONLINE or CUSTOM for a custom one (use --toc-offset).")]
             public string GameType { get; set; }
 
             [Option("toc-offset", HelpText = "Toc offset to use when packing as custom game type.")]
@@ -250,7 +250,7 @@ namespace GT4FS.Tester
                 GameVolumeType.GT4 =>            0x2159 * Volume.DefaultBlockSize,
                 GameVolumeType.GT4_MX5_DEMO =>   0x2159 * Volume.DefaultBlockSize,
                 GameVolumeType.GT4_FIRST_PREV => 0x2159 * Volume.DefaultBlockSize,
-                GameVolumeType.GT4O =>           0x22B7 * Volume.DefaultBlockSize,
+                GameVolumeType.GT4_ONLINE =>     0x22B7 * Volume.DefaultBlockSize,
                 GameVolumeType.CUSTOM =>         (uint)options.TocOffset,
                 _ => 0x800,
             };

@@ -186,7 +186,7 @@ namespace GT4FS.Core {
         GT4,
         GT4_MX5_DEMO,
         GT4_FIRST_PREV,
-        GT4O,
+        GT4_ONLINE,
         TT,
         TT_DEMO,
         CUSTOM,
