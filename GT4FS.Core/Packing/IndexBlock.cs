@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using System.Buffers.Binary;
 
 using Syroot.BinaryData.Core;
 using Syroot.BinaryData;
@@ -48,8 +49,8 @@ namespace GT4FS.Core.Packing
 
         public bool HasSpaceToWriteEntry(Entry lastPrevBlockEntry, Entry firstNextBlockEntry)
         {
-            string indexName = CompareEntries(lastPrevBlockEntry, firstNextBlockEntry);
-            int entrySize = MeasureEntrySize(LastPosition, indexName);
+            byte[] indexer = CompareEntries(lastPrevBlockEntry, firstNextBlockEntry);
+            int entrySize = MeasureEntrySize(LastPosition, indexer);
 
             return entrySize + TocEntrySize <= _spaceLeft;
         }
@@ -59,10 +60,10 @@ namespace GT4FS.Core.Packing
             var blockWriter = new SpanWriter(Buffer);
             blockWriter.Position = LastPosition;
 
-            string indexName = CompareEntries(lastPrevBlockEntry, firstNextBlockEntry);
+            byte[] indexer = CompareEntries(lastPrevBlockEntry, firstNextBlockEntry);
 
-            int actualSpace = MeasureEntrySize(blockWriter.Position, indexName);
-            int entrySize = 4 + Encoding.UTF8.GetByteCount(indexName);
+            int actualSpace = MeasureEntrySize(blockWriter.Position, indexer);
+            int entrySize = indexer.Length;
 
             if (actualSpace > _spaceLeft)
                 throw new Exception("Not enough space to write index entry.");
@@ -72,7 +73,7 @@ namespace GT4FS.Core.Packing
             blockWriter.Endian = Endian.Big;
             blockWriter.WriteInt32(firstNextBlockEntry.ParentNode);
             blockWriter.Endian = Endian.Little;
-            blockWriter.WriteStringRaw(indexName);
+            blockWriter.WriteBytes(indexer);
             blockWriter.Align(0x04); // String is aligned
 
             int endPos = blockWriter.Position;
@@ -97,11 +98,10 @@ namespace GT4FS.Core.Packing
         /// <param name="baseOffset"></param>
         /// <param name="name"></param>
         /// <returns></returns>
-        private ushort MeasureEntrySize(int baseOffset, string name)
+        private ushort MeasureEntrySize(int baseOffset, byte[] indexer)
         {
             int newOffset = baseOffset;
-            newOffset += sizeof(int); // ParentNode
-            newOffset += Encoding.UTF8.GetByteCount(name); // Name Len
+            newOffset += indexer.Length;
 
             newOffset += Utils.Align(newOffset, 0x04) - newOffset;
             return (ushort)(newOffset - baseOffset);
@@ -113,10 +113,31 @@ namespace GT4FS.Core.Packing
         /// <param name="prevLastBlockEntry"></param>
         /// <param name="nextFirstBlockEntry"></param>
         /// <returns></returns>
-        public string CompareEntries(Entry prevLastBlockEntry, Entry nextFirstBlockEntry)
+        public byte[] CompareEntries(Entry prevLastBlockEntry, Entry nextFirstBlockEntry)
         {
+            // The entry is the combination of the parent node, and the entry name.
+            // We are writing the first difference, including in the parent node's int.
+            // An entry may aswell be as low as 1 byte if the parent node takes up the whole int's space, and it is just 1 different.
+            // The game will loop through the indexer's buffer, disregarding what they are. Just checking if its different.
+
             if (prevLastBlockEntry.ParentNode != nextFirstBlockEntry.ParentNode)
-                return string.Empty; // No point returning a file name, the parent node is already enough of a difference
+            {
+                // The entry will only have the parent node difference - its a different folder
+
+                Span<byte> prevNodeID = stackalloc byte[4];
+                BinaryPrimitives.WriteInt32BigEndian(prevNodeID, prevLastBlockEntry.ParentNode);
+
+                Span<byte> nextNodeID = stackalloc byte[4];
+                BinaryPrimitives.WriteInt32BigEndian(nextNodeID, nextFirstBlockEntry.ParentNode);
+
+                for (int i = 0; i < 4; i++)
+                {
+                    if (prevNodeID[i] != nextNodeID[i])
+                        return nextNodeID.Slice(0, i + 1).ToArray();
+                }
+            }
+
+            // Same folder, different file name by this point
 
             string lastName = prevLastBlockEntry.Name;
             string firstNextName = nextFirstBlockEntry.Name;
@@ -124,11 +145,13 @@ namespace GT4FS.Core.Packing
             int maxLen = Math.Max(lastName.Length, firstNextName.Length);
             for (int i = 0; i < maxLen; i++)
             {
-                if (i >= lastName.Length)
-                    return firstNextName.Substring(0, i + 1);
-
-                if (lastName[i] != firstNextName[i])
-                    return firstNextName.Substring(0, i + 1);
+                if (i >= lastName.Length || lastName[i] != firstNextName[i])
+                {
+                    byte[] difference = new byte[4 + (i + 1)];
+                    BinaryPrimitives.WriteInt32BigEndian(difference, nextFirstBlockEntry.ParentNode);
+                    Encoding.UTF8.GetBytes(firstNextName.AsSpan(0, i + 1), difference.AsSpan(4));
+                    return difference;
+                }
             }
 
             // This is unpossible, or else both entries are the same file due to being the same parent
