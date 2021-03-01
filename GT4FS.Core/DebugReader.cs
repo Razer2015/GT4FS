@@ -102,8 +102,12 @@ namespace GT4FS.Core
             block.ParentVolume = this;
             block.BlockIndex = -1;
             block.BlockBuffer = GetBlockBuffer(index);
+
+            Debug.Assert(block.BlockBuffer.Length == block.ParentVolume.BlockSize);
+
             if (block.BlockBuffer != null)
                 block.BlockIndex = index;
+
             return block;
         }
 
@@ -188,6 +192,7 @@ namespace GT4FS.Core
                 int nodeDiff = parentNode1 - parentNode2;
                 if (nodeDiff != 0)
                     return nodeDiff;
+
                 for (int i = 0; i < entry1Len; i++)
                 {
                     if (entry1[i] - entry2[i] != 0)
@@ -277,6 +282,107 @@ namespace GT4FS.Core
                 }
 
                 sw.WriteLine();
+            }
+        }
+
+        public void VerifyBlockIndexes()
+        {
+            Console.WriteLine("Verifying blocks.");
+            VolumeStream.Position = TocOffset + 0x12;
+            ushort blockCount = VolumeStream.ReadUInt16();
+
+            
+            BlockInfo block = GetBlock(0);
+            BlockDebugInfo blockDebInfo = new BlockDebugInfo();
+            blockDebInfo.ReadFromBlockInfo(block);
+
+            foreach (var entry in blockDebInfo.Entries)
+            {
+                var childIndexBlock = GetBlock(entry.BlockIndex);
+                BlockDebugInfo childblockDebInfo = new BlockDebugInfo();
+                childblockDebInfo.ReadFromBlockInfo(childIndexBlock);
+
+                for (int i = 0; i < childblockDebInfo.Entries.Count; i++)
+                {
+                    BlockDebugEntryInfo cutoff = childblockDebInfo.Entries[i];
+                    // Get the entries in the middle
+                    var prevEntryBlock = GetBlock(cutoff.BlockIndex);
+                    BlockDebugInfo prevEntryBlockDebInfo = new BlockDebugInfo();
+                    prevEntryBlockDebInfo.ReadFromBlockInfo(prevEntryBlock);
+
+                    var nextEntryBlock = GetBlock(cutoff.BlockIndex + 1);
+                    BlockDebugInfo nextEntryBlockDebInfo = new BlockDebugInfo();
+                    nextEntryBlockDebInfo.ReadFromBlockInfo(nextEntryBlock);
+
+
+                    var lastEntry = prevEntryBlockDebInfo.Entries[^1];
+                    var nextEntry = nextEntryBlockDebInfo.Entries[0];
+
+                    (byte[] nodeid, string lookup) result = CompareEntries(lastEntry, nextEntry);
+                    byte[] merged = result.nodeid.Concat(Encoding.UTF8.GetBytes(result.lookup)).ToArray();
+
+                    bool isEqual = cutoff.IndexData.AsSpan().SequenceEqual(merged);
+                    Debug.Assert(isEqual);
+
+                    if (i == childblockDebInfo.Entries.Count - 1)
+                    {
+                        var nextMasterCutoff = GetBlock(cutoff.BlockIndex + 1 + 2);
+                        BlockDebugInfo nextMasterEntryBlockDebInfo = new BlockDebugInfo();
+                        nextMasterEntryBlockDebInfo.ReadFromBlockInfo(nextMasterCutoff);
+
+                        var prevMasterEntry = nextEntryBlockDebInfo.Entries[^1];
+                        var nextMasterEntry = nextMasterEntryBlockDebInfo.Entries[0];
+
+                        result = CompareEntries(prevMasterEntry, nextMasterEntry);
+                        merged = result.nodeid.Concat(Encoding.UTF8.GetBytes(result.lookup)).ToArray();
+
+                        isEqual = entry.IndexData.AsSpan().SequenceEqual(merged);
+                        Debug.Assert(isEqual);
+                    }
+                }
+            }
+
+            Console.WriteLine("Index blocks are correctly linked.");
+
+            (byte[] nodeid, string lookup) CompareEntries(BlockDebugEntryInfo prevLastBlockEntry, BlockDebugEntryInfo nextFirstBlockEntry)
+            {
+                byte[] res = new byte[4];
+                if (prevLastBlockEntry.ParentNode != nextFirstBlockEntry.ParentNode)
+                {
+                    byte[] prevNodeID = new byte[4];
+                    BinaryPrimitives.WriteInt32BigEndian(prevNodeID, prevLastBlockEntry.ParentNode);
+
+                    byte[] nextNodeID = new byte[4];
+                    BinaryPrimitives.WriteInt32BigEndian(nextNodeID, nextFirstBlockEntry.ParentNode);
+                    
+                    for (int i = 0; i < 4; i++)
+                    {
+                        if (prevNodeID[i] != nextNodeID[i])
+                        {
+                            res = nextNodeID.AsSpan(0, i+1).ToArray();
+                            break;
+                        }
+                    }
+                    return (res, string.Empty); // No point returning a file name, the parent node is already enough of a difference
+                }
+
+                string lastName = prevLastBlockEntry.Name;
+                string firstNextName = nextFirstBlockEntry.Name;
+
+                int maxLen = Math.Max(lastName.Length, firstNextName.Length);
+                BinaryPrimitives.WriteInt32BigEndian(res, nextFirstBlockEntry.ParentNode);
+
+                for (int i = 0; i < maxLen; i++)
+                {
+                    if (i >= lastName.Length)
+                        return (res, firstNextName.Substring(0, i + 1));
+
+                    if (lastName[i] != firstNextName[i])
+                        return (res, firstNextName.Substring(0, i + 1));
+                }
+
+                // This is unpossible, or else both entries are the same file due to being the same parent
+                throw new ArgumentException($"First entry is equal to the second entry. ({lastName}, parent ID {prevLastBlockEntry.ParentNode})");
             }
         }
 
@@ -516,4 +622,73 @@ namespace GT4FS.Core
             throw new Exception("Failed to bsearch the entry.");
         }
     }
+
+    #region Non original classes, for debugging
+    public class BlockDebugInfo
+    {
+        public short BlockType { get; set; }
+        public short EntryCount { get; set; }
+        public int NextPage { get; set; }
+        public int PrevPage { get; set; }
+        public bool IsMasterIndexBlock { get; set; }
+        public List<BlockDebugEntryInfo> Entries { get; set; }
+
+        public BlockInfo Block { get; set; }
+
+        public void ReadFromBlockInfo(BlockInfo block)
+        {
+            SpanReader sr = new SpanReader(block.BlockBuffer);
+
+            BlockType = sr.ReadInt16();
+            EntryCount = sr.ReadInt16();
+            NextPage = sr.ReadInt32();
+            PrevPage = sr.ReadInt32();
+            Entries = new List<BlockDebugEntryInfo>(EntryCount / 2);
+
+            if (BlockType == 1 && NextPage == -1 && PrevPage == -1)
+                IsMasterIndexBlock = true;
+
+            for (int i = 0; i < EntryCount / 2; i++)
+            {
+                sr.Position = block.ParentVolume.BlockSize - (i * 0x08) - 0x08;
+                BlockDebugEntryInfo entry = new BlockDebugEntryInfo();
+                entry.ReadFromBuffer(ref sr, BlockType == 1);
+                Entries.Add(entry);
+            }
+        }
+
+    }
+
+    public class BlockDebugEntryInfo
+    {
+        public short EntryOffset { get; set; }
+        public short EntryLength { get; set; }
+        public int BlockIndex { get; set; }
+
+        public byte[] IndexData { get; set; }
+
+        public int ParentNode { get; set; }
+        public string Name { get; set; }
+
+        public void ReadFromBuffer(ref SpanReader sr, bool isIndexBlock)
+        {
+            EntryOffset = sr.ReadInt16();
+            EntryLength = sr.ReadInt16();
+            if (isIndexBlock)
+                BlockIndex = sr.ReadInt32();
+
+            sr.Position = EntryOffset;
+
+            if (isIndexBlock)
+                IndexData = sr.ReadBytes(EntryLength);
+            else
+            {
+                sr.Endian = Syroot.BinaryData.Core.Endian.Big;
+                ParentNode = sr.ReadInt32();
+                sr.Endian = Syroot.BinaryData.Core.Endian.Little;
+                Name = sr.ReadStringRaw(EntryLength - 4);
+            }
+        }
+    }
+    #endregion
 }
