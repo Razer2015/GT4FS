@@ -55,11 +55,21 @@ namespace GT4FS.Tester
             public string Output { get; set; } = "GTNew.VOL";
 
             [Option('g', "game", Required = true, HelpText = "Target game to pack the volume for. " +
-                "Supported: GT4, TT, GTHD, TT_DEMO, GT4_MX5_DEMO, GT4_FIRST_PREV, GT4_ONLINE or CUSTOM for a custom one (use --toc-offset).")]
+                "Supported: GT4, GT4_ONLINE, GTHD, TT, TT_DEMO, GT4_MX5_DEMO, GT4_FIRST_PREV, or CUSTOM for a custom one (use --toc-offset).")]
             public string GameType { get; set; }
 
             [Option("toc-offset", HelpText = "Toc offset to use when packing as custom game type.")]
             public int TocOffset { get; set; } = -1;
+
+            /* Wouldn't work when set to 0x1000 (boot crash), not sure why. Needs more debugging.
+            [Option('b', "block-size", HelpText = "Advanced Users. Sets the file system's block size. Default is 0x800/2048.")]
+            public ushort BlockSize { get; set; } */
+
+            [Option('d', "decrypted", HelpText = "Build the volume without header encryption. Default is encrypted.")]
+            public bool Decrypted { get; set; }
+
+            [Option("no-compress", HelpText = "Build the volume without encryption. (Speeds up packing but overall volume size is greatly increased!)")]
+            public bool NoCompress { get; set; }
         }
 
         static void Main(string[] args)
@@ -235,35 +245,36 @@ namespace GT4FS.Tester
 
         private static object RunPackAndReturnExitCode(PackOptions options)
         {
-
             if (!Enum.TryParse(options.GameType, out GameVolumeType game) || game is GameVolumeType.Unknown)
             {
                 Console.WriteLine("Error: Invalid game type provided.");
                 return 1;
             }
 
-            uint tocOffset = game switch
+            uint tocOffset;
+            if (game == GameVolumeType.CUSTOM)
             {
-                GameVolumeType.GTHD =>           0x1    * Volume.DefaultBlockSize,
-                GameVolumeType.TT =>             0x2231 * Volume.DefaultBlockSize,
-                GameVolumeType.TT_DEMO =>        0x2159 * Volume.DefaultBlockSize,
-                GameVolumeType.GT4 =>            0x2159 * Volume.DefaultBlockSize,
-                GameVolumeType.GT4_MX5_DEMO =>   0x2159 * Volume.DefaultBlockSize,
-                GameVolumeType.GT4_FIRST_PREV => 0x2159 * Volume.DefaultBlockSize,
-                GameVolumeType.GT4_ONLINE =>     0x22B7 * Volume.DefaultBlockSize,
-                GameVolumeType.CUSTOM =>         (uint)options.TocOffset,
-                _ => 0x800,
-            };
+                if (options.TocOffset <= -1)
+                {
+                    Console.WriteLine("Error: No custom toc offset provided.");
+                    return 1;
+                }
 
-            if (game == GameVolumeType.CUSTOM && options.TocOffset == -1)
-            {
-                Console.WriteLine("Error: No custom toc offset provided.");
-                return 1;
+                tocOffset = (uint)options.TocOffset;
             }
+            else
+                tocOffset = RoFSBuilder.GetRealToCOffsetForGame(game);
 
-            var tocBuilder = new TocBuilder();
-            tocBuilder.RegisterFilesToPack(options.Input);
-            tocBuilder.Build(options.Output, tocOffset);
+            var fsBuilder = new RoFSBuilder();
+            /*
+            if (options.BlockSize != 0)
+                fsBuilder.SetBlockSize(options.BlockSize);
+            */
+
+            fsBuilder.SetCompressed(!options.NoCompress);
+            fsBuilder.SetEncrypted(!options.Decrypted);
+            fsBuilder.RegisterFilesToPack(options.Input);
+            fsBuilder.Build(options.Output, tocOffset);
 
             return 0;
         }

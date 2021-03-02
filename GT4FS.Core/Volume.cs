@@ -60,7 +60,8 @@ namespace GT4FS.Core {
             for (int i = 0; i < Math.Min((VOLReader.BaseStream.Length / DefaultBlockSize), 10000); i++)
             {
                 VOLReader.BaseStream.Seek(i * DefaultBlockSize, SeekOrigin.Begin);
-                if (VOLReader.ReadInt32() == TocHeader.MagicValue 
+                int magic = VOLReader.ReadInt32();
+                if ((magic == TocHeader.MagicValueEncrypted || magic == 0x526f4653)
                     && VOLReader.ReadInt32(ByteConverter.Little) == TocHeader.Version3_1)
                 {
                     return i * DefaultBlockSize;
@@ -97,8 +98,14 @@ namespace GT4FS.Core {
             VOLReader.BaseStream.Seek(_baseOffset + TocHeader.HeaderSize, SeekOrigin.Begin);
             for (int i = 0; i < _tocHeader.EntryCount + 1; i++)
             {
-                var buffer = VOLReader.ReadBytes(0x04);
-                var offset = BitConverter.ToInt32(PS2Zip.XorEncript(buffer, BitConverter.GetBytes(OffsetCryptKey * (i + 1))), 0);
+                byte[] buffer = VOLReader.ReadBytes(0x04);
+
+                int offset;
+                if (_tocHeader.Encrypted)
+                    offset = BitConverter.ToInt32(PS2Zip.XorEncript(buffer, BitConverter.GetBytes(OffsetCryptKey * (i + 1))), 0);
+                else
+                    offset = BitConverter.ToInt32(buffer, 0);
+
                 if (i == 0)
                 {
                     _firstBlockOffset = offset;
@@ -132,7 +139,7 @@ namespace GT4FS.Core {
             });
         }
 
-        public byte[] DecryptBlock(long offset, int length)
+        public byte[] GetBlock(long offset, int length)
         {
             VOLReader.ByteConverter = ByteConverter.Little;
             VOLReader.BaseStream.Seek(offset, SeekOrigin.Begin);
@@ -141,7 +148,10 @@ namespace GT4FS.Core {
                 using (var decompressionStream = new DeflateStream(new MemoryStream(VOLReader.ReadBytes(length)), CompressionMode.Decompress))
                 {
                     decompressionStream.CopyTo(decompressStream);
-                    return PS2Zip.XorEncript(decompressStream.ToArray(), DataCryptKey);
+                    if (_tocHeader.Encrypted)
+                        return PS2Zip.XorEncript(decompressStream.ToArray(), DataCryptKey);
+                    else
+                        return decompressStream.ToArray();
                 }
             }
         }
@@ -163,7 +173,7 @@ namespace GT4FS.Core {
                     int index = 0;
                     foreach (var (Offset, Length) in Blocks)
                     { // Block at index 0 is garbage?
-                        var buffer = DecryptBlock(Offset, Length);
+                        var buffer = GetBlock(Offset, Length);
                         writer.Write(buffer);
 
                         using (var ms2 = new MemoryStream(buffer))

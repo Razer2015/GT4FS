@@ -136,7 +136,7 @@ namespace GT4FS.Core {
         {
             foreach (var (Offset, Length) in _volume.Blocks)
             {
-                var buffer = _volume.DecryptBlock(Offset, Length);
+                var buffer = _volume.GetBlock(Offset, Length);
                 Nodes.Add(new Node(buffer));
             }
 

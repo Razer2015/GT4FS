@@ -18,8 +18,21 @@ using GT4FS.Core.Entries;
 
 namespace GT4FS.Core.Packing
 {
-    public class TocBuilder
+    /// <summary>
+    /// Read-only file system builder for Gran Turismo 4 & related games.
+    /// </summary>
+    public class RoFSBuilder
     {
+        /// <summary>
+        /// Whether or not to encrypt the volume header & toc. This is supported by the game.
+        /// </summary>
+        public bool Encrypt { get; set; } = true;
+
+        /// <summary>
+        /// Whether or not to allow compressing files.
+        /// </summary>
+        public bool Compress { get; set; } = true;
+
         public const int BlockHeaderSize = 0x0C;
 
         public string InputFolder { get; set; }
@@ -86,10 +99,13 @@ namespace GT4FS.Core.Packing
             using var fs = new FileStream(outputFile, FileMode.Create);
             using var volStream = new BinaryStream(fs);
 
-            // Write fake TOC
-            volStream.WriteInt32(TocHeader.MagicValue, ByteConverter.Big);
-            volStream.WriteInt16(2);
-            volStream.WriteInt16(2);
+            // Write fake 2.2 TOC. Polyphony wrote a fake toc to make people think GT3 tools worked on it.
+            // The start offset is constant and writen into the executables as a page offset.
+            volStream.WriteInt32(TocHeader.MagicValueEncrypted, ByteConverter.Big);
+
+            // 2.2
+            volStream.WriteInt16(2); // Version Minor
+            volStream.WriteInt16(2); // Version Major
 
             volStream.BaseStream.Seek(BaseRealTocOffset, SeekOrigin.Begin);
 
@@ -98,13 +114,26 @@ namespace GT4FS.Core.Packing
             Console.WriteLine($"Done, folder packed to {Path.GetFullPath(outputFile)}.");
         }
 
+        public void SetEncrypted(bool encrypted)
+           => Encrypt = encrypted;
+
+        public void SetCompressed(bool compress)
+           => Compress = compress;
+
+        public void SetBlockSize(ushort blockSize)
+            => BlockSize = blockSize;
+
         /// <summary>
         /// Builds the real table of contents.
         /// </summary>
         /// <param name="volStream"></param>
         private void BuildRealTOC(BinaryStream volStream)
         {
-            volStream.WriteInt32(TocHeader.MagicValue, ByteConverter.Big);
+            if (Encrypt)
+                volStream.WriteInt32(TocHeader.MagicValueEncrypted, ByteConverter.Big);
+            else
+                volStream.WriteString(TocHeader.Magic, StringCoding.Raw);
+
             volStream.WriteInt32(TocHeader.Version3_1);
 
             // Skip the block toc as it can't be written for now
@@ -115,7 +144,7 @@ namespace GT4FS.Core.Packing
                 // Start writing the files.
                 WriteFiles();
 
-                // Write all the entries.
+                // Write all the file & directory entries
                 WriteBlocks();
 
                 // We've got enough to build the header and merge blocks together now
@@ -161,13 +190,15 @@ namespace GT4FS.Core.Packing
                 Span<byte> copySpan = copy.AsSpan(0, block.Length);
                 block.AsSpan().CopyTo(copySpan);
 
-                Utils.XorEncryptFast(copySpan, 0x55);
+                if (Encrypt)
+                    Utils.XorEncryptFast(copySpan, 0x55);
                 var blockComp = PS2Zip.ZlibCodecCompress(copy);
 
                 volStream.WriteBytes(blockComp);
 
                 using (volStream.TemporarySeek(BaseRealTocOffset + TocHeader.HeaderSize + (i * 4), SeekOrigin.Begin))
-                    volStream.WriteInt32(EncryptOffset(blockOffset, i));
+                    volStream.WriteInt32(Encrypt ? EncryptOffset(blockOffset, i) : blockOffset);
+                    
             }
 
             int tocLength = (int)(volStream.Position - BaseRealTocOffset);
@@ -176,7 +207,7 @@ namespace GT4FS.Core.Packing
             // Write the final offset
             _baseDataOffset = (int)(volStream.Position - BaseRealTocOffset);
             using (volStream.TemporarySeek(BaseRealTocOffset + TocHeader.HeaderSize + (blockCount * 4), SeekOrigin.Begin))
-                volStream.WriteInt32(EncryptOffset(tocLength, blockCount));
+                volStream.WriteInt32(Encrypt ? EncryptOffset(tocLength, blockCount) : tocLength);
 
             // Finish up actual header
             using (volStream.TemporarySeek(BaseRealTocOffset + 8, SeekOrigin.Begin))
@@ -480,7 +511,7 @@ namespace GT4FS.Core.Packing
                     string volumePath = absolutePath.Substring(InputFolder.Length + 1);
 
                     var fInfo = new FileInfo(absolutePath);
-                    if (IsCompressedVolumeFile(volumePath))
+                    if (Compress && IsNormallyCompressedVolumeFile(volumePath))
                     {
                         entry = new CompressedFileEntry(relativePath);
                         ((CompressedFileEntry)entry).Size = (int)fInfo.Length;
@@ -500,7 +531,7 @@ namespace GT4FS.Core.Packing
             }
         }
 
-        private bool IsCompressedVolumeFile(string file)
+        private bool IsNormallyCompressedVolumeFile(string file)
         {
             // Main folders that arent compressed - GT4
             if (file.StartsWith("bgm") || file.StartsWith("cameras")
@@ -535,7 +566,6 @@ namespace GT4FS.Core.Packing
             return true;
         }
 
-
         /// <summary>
         /// Builds the 2D representation of the file system, for packing.
         /// </summary>
@@ -550,6 +580,23 @@ namespace GT4FS.Core.Packing
                 if (entry is DirEntry childDir)
                     TraverseBuildEntryPackList(childDir);
             }
+        }
+
+        public static uint GetRealToCOffsetForGame(GameVolumeType game)
+        {
+            return game switch
+            {
+                GameVolumeType.GTHD => 0x1 * Volume.DefaultBlockSize,
+
+                // From this point on, 17mb+ of wasted space..
+                GameVolumeType.TT => 0x2231 * Volume.DefaultBlockSize,
+                GameVolumeType.TT_DEMO => 0x2159 * Volume.DefaultBlockSize,
+                GameVolumeType.GT4 => 0x2159 * Volume.DefaultBlockSize,
+                GameVolumeType.GT4_MX5_DEMO => 0x2159 * Volume.DefaultBlockSize,
+                GameVolumeType.GT4_FIRST_PREV => 0x2159 * Volume.DefaultBlockSize,
+                GameVolumeType.GT4_ONLINE => 0x22B7 * Volume.DefaultBlockSize,
+                _ => 0x800,
+            };
         }
     }
 }

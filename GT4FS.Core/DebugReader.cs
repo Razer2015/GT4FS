@@ -113,7 +113,7 @@ namespace GT4FS.Core
 
         public byte[] GetBlockBuffer(int index)
         {
-            if (!IsSoFS())
+            if (!IsEncryptedRoFSMagic())
             {
                 int beginOffset = GetEntryOffset(index);
                 int endOffset = GetEntryOffset(index + 1);
@@ -143,10 +143,10 @@ namespace GT4FS.Core
             return VolumeStream.ReadInt32() ^ blockIndex * Volume.OffsetCryptKey + Volume.OffsetCryptKey;
         }
 
-        public bool IsSoFS()
+        public bool IsEncryptedRoFSMagic()
         {
             VolumeStream.Position = TocOffset;
-            return VolumeStream.ReadInt32(ByteConverter.Big) == TocHeader.MagicValue;
+            return VolumeStream.ReadInt32(ByteConverter.Big) == TocHeader.MagicValueEncrypted;
         }
 
         public static int CompareEntries(byte[] entry1, int entry1Len, byte[] entry2, int entry2Len)

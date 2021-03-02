@@ -9,8 +9,11 @@ using System.Text;
 
 namespace GT.Shared.FileSystem {
     public class FileLoader {
+        // Magic (notted or not) + version
         const ulong TOC22_MAGIC = 0xAD90B9AC02000200;
-        const ulong TOC31_MAGIC = 0xAD90B9AC01000300;
+        const ulong TOC31_MAGIC_ENCRYPTED = 0xAD90B9AC01000300;
+        const ulong TOC31_MAGIC = 0x526F4653_01000300;
+        //                        0x526f4653_01000300
         const ulong TOCPSP_MAGIC = 0xF319D371600A5E82;
 
         private readonly string _filePath;
@@ -191,7 +194,8 @@ namespace GT.Shared.FileSystem {
         private long TOC31Offset(EndianBinReader reader) {
             for (int i = 0; i < Math.Min((reader.BaseStream.Length / 0x800), 10000); i++) {
                 reader.BaseStream.Seek(i * 0x800, SeekOrigin.Begin);
-                if (reader.ReadUInt64() == TOC31_MAGIC) {
+                ulong magic = reader.ReadUInt64();
+                if (magic == TOC31_MAGIC_ENCRYPTED || magic - TOC31_MAGIC == 0) {
                     return i * 0x800;
                 }
             }

@@ -47,6 +47,12 @@ namespace GT4FS.Core.Packing
             LastPosition = HeaderSize;
         }
 
+        /// <summary>
+        /// Compares two entries and determines whether they can be writen into the block.
+        /// </summary>
+        /// <param name="lastPrevBlockEntry"></param>
+        /// <param name="firstNextBlockEntry"></param>
+        /// <returns></returns>
         public bool HasSpaceToWriteEntry(Entry lastPrevBlockEntry, Entry firstNextBlockEntry)
         {
             byte[] indexer = CompareEntries(lastPrevBlockEntry, firstNextBlockEntry);
@@ -89,6 +95,9 @@ namespace GT4FS.Core.Packing
             LastPosition = endPos;
         }
 
+        /// <summary>
+        /// Fills up the block's type, and entry count.
+        /// </summary>
         public override void FinalizeHeader()
         {
             var blockWriter = new SpanWriter(Buffer);
@@ -100,13 +109,13 @@ namespace GT4FS.Core.Packing
             blockWriter.WriteUInt16((ushort)((EntryCount * 2) + 1));
         }
 
-    /// <summary>
-    /// Measures how much space one entry will take (Toc entry excluded).
-    /// </summary>
-    /// <param name="baseOffset"></param>
-    /// <param name="name"></param>
-    /// <returns></returns>
-    private ushort MeasureEntrySize(int baseOffset, byte[] indexer)
+        /// <summary>
+        /// Measures how much space one entry will take (Toc entry excluded).
+        /// </summary>
+        /// <param name="baseOffset"></param>
+        /// <param name="name"></param>
+        /// <returns></returns>
+        private ushort MeasureEntrySize(int baseOffset, byte[] indexer)
         {
             int newOffset = baseOffset;
             newOffset += indexer.Length;
@@ -155,6 +164,7 @@ namespace GT4FS.Core.Packing
             {
                 if (i >= lastName.Length || lastName[i] != firstNextName[i])
                 {
+                    // Append node id and name to for our final entry
                     byte[] difference = new byte[4 + (i + 1)];
                     BinaryPrimitives.WriteInt32BigEndian(difference, nextFirstBlockEntry.ParentNode);
                     Encoding.UTF8.GetBytes(firstNextName.AsSpan(0, i + 1), difference.AsSpan(4));

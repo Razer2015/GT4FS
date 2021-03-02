@@ -26,7 +26,7 @@ namespace GT4FS.Core.Packing
         {
             BlockSize = blockSize;
             Buffer = new byte[BlockSize];
-            _spaceLeft = blockSize - HeaderSize - 8; // Account for the int at the begining of the bottom toc
+            _spaceLeft = blockSize - HeaderSize - 8; // Account for the block terminator
 
             LastPosition = HeaderSize;
         }
@@ -50,12 +50,13 @@ namespace GT4FS.Core.Packing
             blockWriter.Position = LastPosition;
 
             // Begin to write the entry's common information
+            // Not actually BE, both are writen as indexing buffer
             int entryOffset = blockWriter.Position;
             blockWriter.Endian = Endian.Big;
             blockWriter.WriteInt32(entry.ParentNode);
             blockWriter.Endian = Endian.Little;
             blockWriter.WriteStringRaw(entry.Name);
-            blockWriter.Align(0x04); // String is aligned
+            blockWriter.Align(0x04); // Entry is aligned
 
             // Write type specific
             int entryMetaOffset = blockWriter.Position;
@@ -63,10 +64,10 @@ namespace GT4FS.Core.Packing
             blockWriter.Align(0x04); // Whole entry is also aligned
 
             LastPosition = blockWriter.Position;
-            _spaceLeft -= entrySize + 0x08; // Include the block's toc entry
+            _spaceLeft -= entrySize + TocEntrySize; // Include the block's toc entry
 
             // Write the lookup information at the end of the block
-            blockWriter.Position = BlockSize - ((EntryCount + 1) * 0x08);
+            blockWriter.Position = BlockSize - ((EntryCount + 1) * TocEntrySize);
             blockWriter.WriteUInt16((ushort)entryOffset);
             blockWriter.WriteUInt16((ushort)entry.GetEntryMetaSize());
             blockWriter.WriteUInt16((ushort)entryMetaOffset);
@@ -87,7 +88,7 @@ namespace GT4FS.Core.Packing
             blockWriter.WriteUInt16((ushort)((EntryCount * 2) + 1));
 
             // Write end offset terminator - skip to last of block toc and write it behind it
-            blockWriter.Position = BlockSize - (EntryCount * 0x08);
+            blockWriter.Position = BlockSize - (EntryCount * TocEntrySize);
             blockWriter.Position -= 2;
             blockWriter.WriteInt16((short)LastPosition);
 

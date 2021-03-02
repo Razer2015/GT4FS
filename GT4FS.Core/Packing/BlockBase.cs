@@ -13,12 +13,26 @@ using GT4FS.Core.Entries;
 
 namespace GT4FS.Core.Packing
 {
+    /// <summary>
+    /// Represents a table of content block. This class is abstract.
+    /// </summary>
     public abstract class BlockBase
     {
+        /// <summary>
+        /// Type of block.
+        /// </summary>
         public abstract BlockType Type { get; }
 
         public int LastPosition { get; set; }
+
+        /// <summary>
+        /// Buffer for the block.
+        /// </summary>
         public byte[] Buffer { get; set; }
+
+        /// <summary>
+        /// Block size of this block.
+        /// </summary>
         public int BlockSize { get; set; }
 
         public int BlockIndex { get; set; }
