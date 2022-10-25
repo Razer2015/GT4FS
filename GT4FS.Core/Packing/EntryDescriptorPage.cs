@@ -67,6 +67,7 @@ namespace GT4FS.Core.Packing
             _spaceLeft -= entrySize + TocEntrySize; // Include the page's toc entry
 
             // Write the lookup information at the end of the page
+            pageWriter.Position = PageSize - (EntryCount + 1) * TocEntrySize;
             pageWriter.WriteUInt16((ushort)entryOffset);
             pageWriter.WriteUInt16((ushort)entry.GetEntryMetaSize());
             pageWriter.WriteUInt16((ushort)entryMetaOffset);

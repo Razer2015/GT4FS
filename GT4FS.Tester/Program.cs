@@ -112,7 +112,6 @@ namespace GT4FS.Tester
             BTree btree = GetBTree(options.Input, options.Verbose ? new ConsoleWriter() : null);
             if (btree is null)
                 return;
-            btree.Dispose();
 
             // Output check
             if (string.IsNullOrEmpty(options.Output))
