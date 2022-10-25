@@ -8,7 +8,7 @@ namespace GT4FS.Core.Entries
 {
     public class DirEntry : Entry
     {
-        public List<Entry> ChildEntries { get; set; } = new();
+        public SortedDictionary<string, Entry> ChildEntries { get; set; } = new(StringComparer.Ordinal);
 
         public DirEntry() { }
         public DirEntry(string name)
