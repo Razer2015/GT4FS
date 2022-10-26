@@ -18,14 +18,24 @@ namespace GT4FS.Core {
     {
         private readonly Volume _volume;
         private readonly QueueWriter _queueWriter;
-        public List<Node> Nodes { get; set; }
+        public List<ToCPage> Pages { get; set; }
         private IEnumerable<Entry> _nodeEntries;
 
         public BTree(Volume volume, ILogWriter logWriter = null)
         {
             _volume = volume;
-            Nodes = new List<Node>();
+            Pages = new List<ToCPage>();
             _queueWriter = logWriter != null ? new QueueWriter(logWriter) : null;
+        }
+
+        public long GetRealToCOffset()
+        {
+            return _volume.GetRealTocOffset();
+        }
+
+        public long GetBaseDataOffset()
+        {
+            return _volume.GetBaseDataOffset();
         }
 
         public bool ExtractAllFiles(string outputPath, string volName = null, bool overwrite = false)
@@ -134,13 +144,39 @@ namespace GT4FS.Core {
 
         private void Read()
         {
-            foreach (var (Offset, Length) in _volume.Blocks)
+            foreach (var (Offset, Length) in _volume.Pages)
             {
-                var buffer = _volume.GetBlock(Offset, Length);
-                Nodes.Add(new Node(buffer));
+                var buffer = _volume.GetPage(Offset, Length);
+                Pages.Add(new ToCPage(buffer));
             }
 
-            _nodeEntries = Nodes.Where(x => x.Flag == 0).SelectMany(x => x.NodeEntries);
+            _nodeEntries = Pages.Where(x => x.Flag == 0).SelectMany(x => x.NodeEntries);
+        }
+
+        public IEnumerable<Entry> GetNodes()
+        {
+            if (_nodeEntries == null)
+                Read();
+
+            // Build relationships/children
+            foreach (Entry node in _nodeEntries)
+            {
+                if (node.Name == ".")
+                    continue;
+
+                if (node is DirEntry dir)
+                {
+                    var parentDir = _nodeEntries.FirstOrDefault(e => e.NodeID == node.ParentNode) as DirEntry;
+                    parentDir.ChildEntries.Add(dir.Name, dir);
+                }
+                else
+                {
+                    var parentDir = _nodeEntries.FirstOrDefault(e => e.NodeID == node.ParentNode) as DirEntry;
+                    parentDir.ChildEntries.Add(node.Name, node);
+                }
+            }
+
+            return _nodeEntries;
         }
 
         private List<(string Path, long Offset, uint PackedSize, uint RealSize, DateTime ModifiedDate)> GetAllFiles()
@@ -208,6 +244,7 @@ namespace GT4FS.Core {
 
         public void Dispose()
         {
+            _volume?.Dispose();
             _queueWriter?.Dispose();
         }
     }

@@ -14,31 +14,31 @@ using GT4FS.Core.Entries;
 namespace GT4FS.Core.Packing
 {
     /// <summary>
-    /// Represents a table of content block. This class is abstract.
+    /// Represents a table of content page. This class is abstract.
     /// </summary>
-    public abstract class BlockBase
+    public abstract class PageBase
     {
         /// <summary>
-        /// Type of block.
+        /// Type of page.
         /// </summary>
-        public abstract BlockType Type { get; }
+        public abstract PageType Type { get; }
 
         public int LastPosition { get; set; }
 
         /// <summary>
-        /// Buffer for the block.
+        /// Buffer for the page.
         /// </summary>
         public byte[] Buffer { get; set; }
 
         /// <summary>
-        /// Block size of this block.
+        /// Page size.
         /// </summary>
-        public int BlockSize { get; set; }
+        public int PageSize { get; set; }
 
-        public int BlockIndex { get; set; }
+        public int PageIndex { get; set; }
 
-        public BlockBase PreviousBlock { get; set; }
-        public BlockBase NextBlock { get; set; }
+        public PageBase PreviousPage { get; set; }
+        public PageBase NextPage { get; set; }
 
         public int EntryCount { get; set; }
         protected int _spaceLeft;
@@ -52,7 +52,7 @@ namespace GT4FS.Core.Packing
             => BinaryPrimitives.WriteInt32LittleEndian(Buffer.AsSpan()[8..], previous);
 
 
-        public enum BlockType : ushort
+        public enum PageType : ushort
         {
             /// <summary>
             /// Stores information about the file entries.
@@ -60,7 +60,7 @@ namespace GT4FS.Core.Packing
             Entry,
 
             /// <summary>
-            /// Stores block indexing information, to then point to entry blocks.
+            /// Stores page indexing information, to then point to entry pages.
             /// </summary>
             Index,
         }

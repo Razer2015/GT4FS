@@ -8,22 +8,32 @@ using System.Linq;
 using Syroot.BinaryData;
 
 namespace GT4FS.Core {
-    public class Volume
+    public class Volume : IDisposable
     {
-        public const int DefaultBlockSize = 0x800;
+        public const int DefaultPageSize = 0x800;
         public const int OffsetCryptKey = 0x14ac327a;
         public static readonly byte[] DataCryptKey = new byte[] { 0x55 };
 
         private long _baseOffset = 0;
         private TocHeader _tocHeader;
-        private int _firstBlockOffset;
+        private int _firstPageOffset;
         private List<int> _offsets;
-        public List<(long Offset, int Length)> Blocks { get; set; }
+        public List<(long Offset, int Length)> Pages { get; set; }
         public BinaryStream VOLReader { get; set; }
 
         public Volume(Stream stream)
         {
             VOLReader = new BinaryStream(stream, ByteConverter.Little);
+        }
+
+        public long GetBaseDataOffset()
+        {
+            return _tocHeader.DataOffset;
+        }
+
+        public long GetRealTocOffset()
+        {
+            return _baseOffset;
         }
 
         public void ReadVolume()
@@ -44,10 +54,10 @@ namespace GT4FS.Core {
 #endif
 
             ReadEntryOffsets();
-            ReadBlocks();
+            ReadPages();
 #if DEBUG
-            // Debug write what has been decrypted so far (TOC header, Offset table, Blocks)
-            DebugWriteBlocks();
+            // Debug write what has been decrypted so far (TOC header, Offset table, Pages)
+            DebugWritePages();
 #endif
         }
 
@@ -57,14 +67,14 @@ namespace GT4FS.Core {
         private long BaseOffset()
         {
             VOLReader.ByteConverter = ByteConverter.Big;
-            for (int i = 0; i < Math.Min((VOLReader.BaseStream.Length / DefaultBlockSize), 10000); i++)
+            for (int i = 0; i < Math.Min((VOLReader.BaseStream.Length / DefaultPageSize), 10000); i++)
             {
-                VOLReader.BaseStream.Seek(i * DefaultBlockSize, SeekOrigin.Begin);
+                VOLReader.BaseStream.Seek(i * DefaultPageSize, SeekOrigin.Begin);
                 int magic = VOLReader.ReadInt32();
                 if ((magic == TocHeader.MagicValueEncrypted || magic == 0x526f4653)
                     && VOLReader.ReadInt32(ByteConverter.Little) == TocHeader.Version3_1)
                 {
-                    return i * DefaultBlockSize;
+                    return i * DefaultPageSize;
                 }
             }
 
@@ -72,15 +82,15 @@ namespace GT4FS.Core {
         }
 
         /// <summary>
-        ///     Get block offset and length based on index (0 is garbage table?)
+        ///     Get page offset and length based on index
         /// </summary>
         /// <param name="index"></param>
-        private (long Offset, int Length) GetBlock(int index)
+        private (long Offset, int Length) GetPage(int index)
         {
-            if (Blocks == null || Blocks.Count <= 0)
-                ReadBlocks();
+            if (Pages == null || Pages.Count <= 0)
+                ReadPages();
 
-            return Blocks[index];
+            return Pages[index];
         }
 
         /// <summary>
@@ -108,19 +118,19 @@ namespace GT4FS.Core {
 
                 if (i == 0)
                 {
-                    _firstBlockOffset = offset;
+                    _firstPageOffset = offset;
                     continue;
                 }
                 _offsets.Add(offset);
             }
 
 #if DEBUG
-            // Debug write what has been decrypted so far (TOC header and block offsets)
+            // Debug write what has been decrypted so far (TOC header and page offsets)
             using (var ms = new MemoryStream())
             using (var writer = new BinaryStream(ms))
             {
                 _tocHeader.Write(writer);
-                writer.Write(_firstBlockOffset);
+                writer.Write(_firstPageOffset);
                 foreach (var offset in _offsets)
                     writer.Write(offset);
 
@@ -129,17 +139,17 @@ namespace GT4FS.Core {
 #endif
         }
 
-        private void ReadBlocks()
+        private void ReadPages()
         {
-            Blocks = new List<(long Offset, int Length)>();
-            _offsets.Aggregate(_firstBlockOffset, (acc, x) =>
+            Pages = new List<(long Offset, int Length)>();
+            _offsets.Aggregate(_firstPageOffset, (acc, x) =>
             {
-                Blocks.Add((_baseOffset + acc, x - acc));
+                Pages.Add((_baseOffset + acc, x - acc));
                 return x;
             });
         }
 
-        public byte[] GetBlock(long offset, int length)
+        public byte[] GetPage(long offset, int length)
         {
             VOLReader.ByteConverter = ByteConverter.Little;
             VOLReader.BaseStream.Seek(offset, SeekOrigin.Begin);
@@ -156,37 +166,42 @@ namespace GT4FS.Core {
             }
         }
 
-        private void DebugWriteBlocks()
+        private void DebugWritePages()
         {
             using (var ms = new MemoryStream())
             using (var writer = new BinaryStream(ms))
             {
                 _tocHeader.Write(writer);
-                writer.Write(_firstBlockOffset);
+                writer.Write(_firstPageOffset);
                 foreach (var offset in _offsets)
                     writer.Write(offset);
 
-                // Blocks
-                Directory.CreateDirectory("blocks");
-                using (var sw = new StreamWriter("blocks.txt"))
+                // Pages
+                Directory.CreateDirectory("pages");
+                using (var sw = new StreamWriter("pages.txt"))
                 {
                     int index = 0;
-                    foreach (var (Offset, Length) in Blocks)
-                    { // Block at index 0 is garbage?
-                        var buffer = GetBlock(Offset, Length);
+                    foreach (var (Offset, Length) in Pages)
+                    { 
+                        var buffer = GetPage(Offset, Length);
                         writer.Write(buffer);
 
                         using (var ms2 = new MemoryStream(buffer))
                         using (var reader = new BinaryStream(ms2, ByteConverter.Big))
                             sw.WriteLine($"{index,4} - {reader.ReadInt16():X4} {reader.ReadInt16():X4} {reader.ReadInt32():X8} {reader.ReadInt32():X8} {reader.ReadInt32():X8}");
 
-                        //File.WriteAllBytes($"blocks\\block_{index}.bin", buffer);
+                        //File.WriteAllBytes($"pages\\page_{index}.bin", buffer);
                         index++;
                     }
                 }
 
                 File.WriteAllBytes("toc.bin", ms.ToArray());
             }
+        }
+
+        public void Dispose()
+        {
+            ((IDisposable)VOLReader).Dispose();
         }
     }
 

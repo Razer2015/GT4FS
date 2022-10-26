@@ -17,6 +17,21 @@ namespace GT4FS.Core.Entries
         /// </summary>
         public const int Alignment = 0x04;
 
+        /// <summary>
+        /// For appending mode, not actually part of the entry's data.
+        /// </summary>
+        public bool IsModFileAppendToVolumeEnd { get; set; }
+
+        /// <summary>
+        /// For appending mode, not actually part of the entry's data.
+        /// </summary>
+        public string VolumePath { get; set; }
+
+        /// <summary>
+        /// For appending mode, not actually part of the entry's data.
+        /// </summary>
+        public string AbsolutePath { get; set; }
+
         public int ParentNode { get; set; }
         public string Name { get; set; }
         public VolumeEntryType EntryType { get; set; }

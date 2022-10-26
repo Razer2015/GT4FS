@@ -24,9 +24,9 @@ namespace GT4FS.Core
         public int TocOffset { get; set; }
 
         public BinaryStream VolumeStream { get; set; }
-        public ushort BlockSize { get; set; } = 0x800;
-        public ushort GetBlockSize()
-            => BlockSize;
+        public ushort PageSize { get; set; } = 0x800;
+        public ushort GetPageSize()
+            => PageSize;
 
         // Non original, just to init it
         public static DebugReader FromVolume(string volume, int tocOffset)
@@ -64,28 +64,28 @@ namespace GT4FS.Core
             BinaryPrimitives.WriteInt32BigEndian(entryInput, parentID);
             Encoding.ASCII.GetBytes(part, entryInput.AsSpan(4));
 
-            BlockInfo blockInfo = GetBlock(0);
-            while (blockInfo.IsIndexBlock)
+            PageInfo page = GetPage(0);
+            while (page.IsIndexPage)
             {
-                Debug.WriteLine($"Searching index block ({blockInfo.BlockIndex}) for {part}");
-                int nextBlockIndex = blockInfo.SearchBlockIndex(entryInput, entryInput.Length);
-                blockInfo.SwitchToNewIndex(nextBlockIndex);
+                Debug.WriteLine($"Searching index page ({page.PageIndex}) for {part}");
+                int nextPageIndex = page.SearchIndexPage(entryInput, entryInput.Length);
+                page.SwitchToNewIndex(nextPageIndex);
 
-                if (blockInfo.IsIndexBlock)
-                    Debug.WriteLine($"Next index block to search is: {blockInfo.BlockIndex}");
+                if (page.IsIndexPage)
+                    Debug.WriteLine($"Next index page to search is: {page.PageIndex}");
             }
 
-            Debug.WriteLine($"{part} ({parentID}) is located at block index: {blockInfo.BlockIndex}");
+            Debug.WriteLine($"{part} ({parentID}) is located at page index: {page.PageIndex}");
 
-            // At that point we have the block of which the entry we're looking for is in
-            if (!blockInfo.SearchEntry(entryInput, entryInput.Length, out int resultEntryIndex))
+            // At that point we have the page of which the entry we're looking for is in
+            if (!page.SearchEntry(entryInput, entryInput.Length, out int indexResult))
                 return null; // return default entry
             else
             {
-                Debug.WriteLine($"Found {part} at block {blockInfo.BlockIndex} with entry index {resultEntryIndex}");
+                Debug.WriteLine($"Found {part} at page {page.PageIndex} with entry index {indexResult}");
                 // Read entry and return it using the index
-                SpanReader sr = new SpanReader(blockInfo.BlockBuffer);
-                sr.Position = BlockSize - (resultEntryIndex * 0x08);
+                SpanReader sr = new SpanReader(page.PageBuffer);
+                sr.Position = PageSize - (indexResult * 0x08);
                 sr.Position -= 0x04; // Skip to the actual entry's type metadata
 
                 short entryTypeMetaOffset = sr.ReadInt16();
@@ -96,22 +96,22 @@ namespace GT4FS.Core
             }
         }
 
-        public BlockInfo GetBlock(int index)
+        public PageInfo GetPage(int index)
         {
-            BlockInfo block = new BlockInfo();
-            block.ParentVolume = this;
-            block.BlockIndex = -1;
-            block.BlockBuffer = GetBlockBuffer(index);
+            PageInfo page = new PageInfo();
+            page.ParentVolume = this;
+            page.PageIndex = -1;
+            page.PageBuffer = GetPageBuffer(index);
 
-            Debug.Assert(block.BlockBuffer.Length == block.ParentVolume.BlockSize);
+            Debug.Assert(page.PageBuffer.Length == page.ParentVolume.PageSize);
 
-            if (block.BlockBuffer != null)
-                block.BlockIndex = index;
+            if (page.PageBuffer != null)
+                page.PageIndex = index;
 
-            return block;
+            return page;
         }
 
-        public byte[] GetBlockBuffer(int index)
+        public byte[] GetPageBuffer(int index)
         {
             if (!IsEncryptedRoFSMagic())
             {
@@ -127,20 +127,20 @@ namespace GT4FS.Core
             {
                 int beginOffset = GetEntryOffsetSecure(index);
                 int endOffset = GetEntryOffsetSecure(index + 1);
-                return DecryptBlock(VolumeStream, TocOffset + beginOffset, endOffset - beginOffset);
+                return DecryptPage(VolumeStream, TocOffset + beginOffset, endOffset - beginOffset);
             }
         }
 
-        public int GetEntryOffset(int blockIndex)
+        public int GetEntryOffset(int pageIndex)
         {
-            VolumeStream.Position = TocOffset + TocHeader.HeaderSize + (blockIndex * 4);
+            VolumeStream.Position = TocOffset + TocHeader.HeaderSize + (pageIndex * 4);
             return VolumeStream.ReadInt32();
         }
 
-        public int GetEntryOffsetSecure(int blockIndex)
+        public int GetEntryOffsetSecure(int pageIndex)
         {
-            VolumeStream.Position = TocOffset + TocHeader.HeaderSize + (blockIndex * 4);
-            return VolumeStream.ReadInt32() ^ blockIndex * Volume.OffsetCryptKey + Volume.OffsetCryptKey;
+            VolumeStream.Position = TocOffset + TocHeader.HeaderSize + (pageIndex * 4);
+            return VolumeStream.ReadInt32() ^ pageIndex * Volume.OffsetCryptKey + Volume.OffsetCryptKey;
         }
 
         public bool IsEncryptedRoFSMagic()
@@ -205,7 +205,7 @@ namespace GT4FS.Core
         }
 
         // Non original, borrowed
-        public byte[] DecryptBlock(BinaryStream bs, long offset, int length)
+        public byte[] DecryptPage(BinaryStream bs, long offset, int length)
         {
             bs.ByteConverter = ByteConverter.Little;
             bs.BaseStream.Seek(offset, SeekOrigin.Begin);
@@ -224,23 +224,23 @@ namespace GT4FS.Core
         public void DebugWriteEntryInfos()
         {
             VolumeStream.Position = TocOffset + 0x12;
-            ushort blockCount = VolumeStream.ReadUInt16();
+            ushort pageCount = VolumeStream.ReadUInt16();
 
-            using var sw = new StreamWriter("block_info.txt");
+            using var sw = new StreamWriter("page_info.txt");
 
-            for (int i = 0; i < blockCount; i++)
+            for (int i = 0; i < pageCount; i++)
             {
-                BlockInfo block = GetBlock(i);
-                SpanReader sr = new SpanReader(block.BlockBuffer);
+                PageInfo page = GetPage(i);
+                SpanReader sr = new SpanReader(page.PageBuffer);
 
-                short blockType = sr.ReadInt16();
+                short pageType = sr.ReadInt16();
                 short entryCount = sr.ReadInt16();
                 int realEntryCount = (entryCount / 2);
 
-                sw.WriteLine($"Block #{i} {(blockType == 1 ? "[INDEXER]" : "")} - {entryCount} entries [{realEntryCount} actual]");
-                sr.Position = BlockSize - (realEntryCount * 0x08);
+                sw.WriteLine($"Page #{i} {(pageType == 1 ? "[INDEXER]" : "")} - {entryCount} entries [{realEntryCount} actual]");
+                sr.Position = PageSize - (realEntryCount * 0x08);
 
-                if (blockType == 1)
+                if (pageType == 1)
                 {
                     sr.Position -= 4;
                     sw.WriteLine($"Last Entry Index: {sr.ReadInt32()}");
@@ -253,13 +253,13 @@ namespace GT4FS.Core
 
                 for (int j = 0; j < realEntryCount; j++)
                 {
-                    sr.Position = BlockSize - (j * 0x08) - 0x08;
+                    sr.Position = PageSize - (j * 0x08) - 0x08;
                     short entryOffset = sr.ReadInt16();
                     short entryLen = sr.ReadInt16();
 
-                    if (blockType == 1)
+                    if (pageType == 1)
                     {
-                        int blockIndex = sr.ReadInt16();
+                        int pageIndex = sr.ReadInt16();
                         sr.Position = entryOffset;
 
                         sr.Endian = Syroot.BinaryData.Core.Endian.Big;
@@ -272,7 +272,7 @@ namespace GT4FS.Core
                         else
                             str = "string was null";
 
-                        sw.WriteLine($"{j} -> Offset: {entryOffset:X2} - Length: {entryLen} - Points to Block: {blockIndex} | ParentNode: {parentNode}, Name: {str}");
+                        sw.WriteLine($"{j} -> Offset: {entryOffset:X2} - Length: {entryLen} - Points to Page: {pageIndex} | ParentNode: {parentNode}, Name: {str}");
                     }
                     else
                     {
@@ -294,38 +294,38 @@ namespace GT4FS.Core
             }
         }
 
-        public void VerifyBlockIndexes()
+        public void VerifyPageIndices()
         {
-            Console.WriteLine("Verifying blocks.");
+            Console.WriteLine("Verifying pages.");
             VolumeStream.Position = TocOffset + 0x12;
-            ushort blockCount = VolumeStream.ReadUInt16();
+            ushort pageCount = VolumeStream.ReadUInt16();
 
             
-            BlockInfo block = GetBlock(0);
-            BlockDebugInfo blockDebInfo = new BlockDebugInfo();
-            blockDebInfo.ReadFromBlockInfo(block);
+            PageInfo page = GetPage(0);
+            PageDebugInfo pageDebInfo = new PageDebugInfo();
+            pageDebInfo.ReadFromPageInfo(page);
 
-            foreach (var entry in blockDebInfo.Entries)
+            foreach (var entry in pageDebInfo.Entries)
             {
-                var childIndexBlock = GetBlock(entry.BlockIndex);
-                BlockDebugInfo childblockDebInfo = new BlockDebugInfo();
-                childblockDebInfo.ReadFromBlockInfo(childIndexBlock);
+                var childIndexPage = GetPage(entry.PageIndex);
+                PageDebugInfo childPageDebInfo = new PageDebugInfo();
+                childPageDebInfo.ReadFromPageInfo(childIndexPage);
 
-                for (int i = 0; i < childblockDebInfo.Entries.Count; i++)
+                for (int i = 0; i < childPageDebInfo.Entries.Count; i++)
                 {
-                    BlockDebugEntryInfo cutoff = childblockDebInfo.Entries[i];
+                    PageDebugEntryInfo cutoff = childPageDebInfo.Entries[i];
                     // Get the entries in the middle
-                    var prevEntryBlock = GetBlock(cutoff.BlockIndex);
-                    BlockDebugInfo prevEntryBlockDebInfo = new BlockDebugInfo();
-                    prevEntryBlockDebInfo.ReadFromBlockInfo(prevEntryBlock);
+                    var prevEntryPage = GetPage(cutoff.PageIndex);
+                    PageDebugInfo prevEntryPageDebInfo = new PageDebugInfo();
+                    prevEntryPageDebInfo.ReadFromPageInfo(prevEntryPage);
 
-                    var nextEntryBlock = GetBlock(cutoff.BlockIndex + 1);
-                    BlockDebugInfo nextEntryBlockDebInfo = new BlockDebugInfo();
-                    nextEntryBlockDebInfo.ReadFromBlockInfo(nextEntryBlock);
+                    var nextEntryPage = GetPage(cutoff.PageIndex + 1);
+                    PageDebugInfo nextEntryPageDebInfo = new PageDebugInfo();
+                    nextEntryPageDebInfo.ReadFromPageInfo(nextEntryPage);
 
 
-                    var lastEntry = prevEntryBlockDebInfo.Entries[^1];
-                    var nextEntry = nextEntryBlockDebInfo.Entries[0];
+                    var lastEntry = prevEntryPageDebInfo.Entries[^1];
+                    var nextEntry = nextEntryPageDebInfo.Entries[0];
 
                     (byte[] nodeid, string lookup) result = CompareEntries(lastEntry, nextEntry);
                     byte[] merged = result.nodeid.Concat(Encoding.UTF8.GetBytes(result.lookup)).ToArray();
@@ -333,14 +333,14 @@ namespace GT4FS.Core
                     bool isEqual = cutoff.IndexData.AsSpan().SequenceEqual(merged);
                     Debug.Assert(isEqual);
 
-                    if (i == childblockDebInfo.Entries.Count - 1)
+                    if (i == childPageDebInfo.Entries.Count - 1)
                     {
-                        var nextMasterCutoff = GetBlock(cutoff.BlockIndex + 1 + 2);
-                        BlockDebugInfo nextMasterEntryBlockDebInfo = new BlockDebugInfo();
-                        nextMasterEntryBlockDebInfo.ReadFromBlockInfo(nextMasterCutoff);
+                        var nextMasterCutoff = GetPage(cutoff.PageIndex + 1 + 2);
+                        PageDebugInfo nextMasterEntryPageDebInfo = new PageDebugInfo();
+                        nextMasterEntryPageDebInfo.ReadFromPageInfo(nextMasterCutoff);
 
-                        var prevMasterEntry = nextEntryBlockDebInfo.Entries[^1];
-                        var nextMasterEntry = nextMasterEntryBlockDebInfo.Entries[0];
+                        var prevMasterEntry = nextEntryPageDebInfo.Entries[^1];
+                        var nextMasterEntry = nextMasterEntryPageDebInfo.Entries[0];
 
                         result = CompareEntries(prevMasterEntry, nextMasterEntry);
                         merged = result.nodeid.Concat(Encoding.UTF8.GetBytes(result.lookup)).ToArray();
@@ -351,18 +351,18 @@ namespace GT4FS.Core
                 }
             }
 
-            Console.WriteLine("Index blocks are correctly linked.");
+            Console.WriteLine("Index pages are correctly linked.");
 
-            (byte[] nodeid, string lookup) CompareEntries(BlockDebugEntryInfo prevLastBlockEntry, BlockDebugEntryInfo nextFirstBlockEntry)
+            (byte[] nodeid, string lookup) CompareEntries(PageDebugEntryInfo prevLastPageEntry, PageDebugEntryInfo nextFirstPageEntry)
             {
                 byte[] res = new byte[4];
-                if (prevLastBlockEntry.ParentNode != nextFirstBlockEntry.ParentNode)
+                if (prevLastPageEntry.ParentNode != nextFirstPageEntry.ParentNode)
                 {
                     byte[] prevNodeID = new byte[4];
-                    BinaryPrimitives.WriteInt32BigEndian(prevNodeID, prevLastBlockEntry.ParentNode);
+                    BinaryPrimitives.WriteInt32BigEndian(prevNodeID, prevLastPageEntry.ParentNode);
 
                     byte[] nextNodeID = new byte[4];
-                    BinaryPrimitives.WriteInt32BigEndian(nextNodeID, nextFirstBlockEntry.ParentNode);
+                    BinaryPrimitives.WriteInt32BigEndian(nextNodeID, nextFirstPageEntry.ParentNode);
                     
                     for (int i = 0; i < 4; i++)
                     {
@@ -375,11 +375,11 @@ namespace GT4FS.Core
                     return (res, string.Empty); // No point returning a file name, the parent node is already enough of a difference
                 }
 
-                string lastName = prevLastBlockEntry.Name;
-                string firstNextName = nextFirstBlockEntry.Name;
+                string lastName = prevLastPageEntry.Name;
+                string firstNextName = nextFirstPageEntry.Name;
 
                 int maxLen = Math.Max(lastName.Length, firstNextName.Length);
-                BinaryPrimitives.WriteInt32BigEndian(res, nextFirstBlockEntry.ParentNode);
+                BinaryPrimitives.WriteInt32BigEndian(res, nextFirstPageEntry.ParentNode);
 
                 for (int i = 0; i < maxLen; i++)
                 {
@@ -391,7 +391,7 @@ namespace GT4FS.Core
                 }
 
                 // This is unpossible, or else both entries are the same file due to being the same parent
-                throw new ArgumentException($"First entry is equal to the second entry. ({lastName}, parent ID {prevLastBlockEntry.ParentNode})");
+                throw new ArgumentException($"First entry is equal to the second entry. ({lastName}, parent ID {prevLastPageEntry.ParentNode})");
             }
         }
 
@@ -399,151 +399,136 @@ namespace GT4FS.Core
             => VolumeStream?.Dispose();
     }
 
-    public class BlockInfo
+    public class PageInfo
     {
         public DebugReader ParentVolume { get; set; }
-        public int BlockIndex { get; set; }
-        public byte[] BlockBuffer { get; set; }
+        public int PageIndex { get; set; }
+        public byte[] PageBuffer { get; set; }
 
-        public bool IsIndexBlock 
-            => BinaryPrimitives.ReadInt16LittleEndian(BlockBuffer) == 1;
+        public bool IsIndexPage 
+            => BinaryPrimitives.ReadInt16LittleEndian(PageBuffer) == 1;
 
         public void SwitchToNewIndex(int index)
         {
-            if (BlockIndex != -1)
-                BlockIndex = -1;
+            if (PageIndex != -1)
+                PageIndex = -1;
 
-            BlockBuffer = ParentVolume.GetBlockBuffer(index);
-            if (BlockBuffer != null)
-                BlockIndex = index;
+            PageBuffer = ParentVolume.GetPageBuffer(index);
+            if (PageBuffer != null)
+                PageIndex = index;
         }
 
-        public int SearchBlockIndex(byte[] input, int inputLen)
+        public int SearchIndexPage(byte[] input, int inputLen)
         {
-            SpanReader sr = new SpanReader(BlockBuffer);
+            SpanReader sr = new SpanReader(PageBuffer);
             sr.Position = 2;
 
-            int indexEntryCount = sr.ReadInt16();
-            int realEntryCount = (((indexEntryCount - 1) / 2) - 1);
-            ushort blockSize = ParentVolume.GetBlockSize();
+            int entryCountRaw = sr.ReadInt16();
+            ushort pageSize = ParentVolume.GetPageSize();
 
-            if (indexEntryCount == 1)
+            if (entryCountRaw == 1)
             {
-                // return the first
-                sr.Position = blockSize - 4;
-                return sr.ReadInt32();
+                sr.Position = pageSize - 4;
+                return sr.ReadByte() | sr.ReadByte() << 8 | sr.ReadByte() << 16 | sr.ReadByte() << 24;
             }
 
-            // First
-            sr.Position = blockSize - 0x08;
+            // Check first
+            sr.Position = pageSize - 0x08;
             short entryOffset = sr.ReadInt16();
             short entryLength = sr.ReadInt16();
             sr.Position = entryOffset;
             byte[] entryIndexer = sr.ReadBytes(entryLength);
-            int diff = DebugReader.CompareEntries(input, inputLen, entryIndexer, entryLength);
 
-            if (diff < 0)
+            if (DebugReader.CompareEntries(input, inputLen, entryIndexer, entryLength) < 0)
             {
-                // return the first block index
-                sr.Position = (blockSize - 0x08) + 4;
-                return sr.ReadInt32();
+                sr.Position = pageSize - 4;
+                return sr.ReadByte() | sr.ReadByte() << 8 | sr.ReadByte() << 16 | sr.ReadByte() << 24;
             }
 
-            // Last
-            sr.Position = blockSize - (realEntryCount * 0x08);
+            int min = 0;
+            int max = (((entryCountRaw - 1) >> 1) - 1);
+
+            // Check last
+            sr.Position = pageSize - (max * 0x08) - 8;
             entryOffset = sr.ReadInt16();
             entryLength = sr.ReadInt16();
             sr.Position = entryOffset;
             entryIndexer = sr.ReadBytes(entryLength);
-            diff = DebugReader.CompareEntries(input, inputLen, entryIndexer, entryLength);
 
-            if (diff > 0)
+            if (DebugReader.CompareEntries(input, inputLen, entryIndexer, entryLength) > 0)
             {
-                // return the last block index
-                sr.Position = blockSize - (realEntryCount * 0x08) + 4;
-                return sr.ReadInt32();
+                sr.Position = pageSize - (max * 0x08) - (8 + 4);
+                return sr.ReadByte() | sr.ReadByte() << 8 | sr.ReadByte() << 16 | sr.ReadByte() << 24;
             }
 
-            int min = 0;
-            int max = realEntryCount;
-            int mid = (min + max) / 2;
-
-            while (min < max)
+            while ((max - min) >= 8)
             {
-                if (max - min < 8)
-                {
-                    mid = min;
-                    int baseOffset = blockSize - (mid * 0x08);
-                    int entryitorOffset = baseOffset;
-                    if (max < min)
-                        return -1;
+                int mid = (min + max) / 2;
+                int entryItorOffset = pageSize - (mid * 0x08);
 
-                    while (min <= max)
-                    {
-                        entryitorOffset -= 0x08;
-                        sr.Position = entryitorOffset;
-                        entryOffset = sr.ReadInt16();
-
-                        int entryIndexOffset = (mid * 0x08 - blockSize) + baseOffset + entryitorOffset;
-                        sr.Position = entryIndexOffset + 2;
-
-                        entryLength = sr.ReadInt16();
-                        sr.Position = entryOffset;
-                        entryIndexer = sr.ReadBytes(entryLength);
-                        diff = DebugReader.CompareEntries(input, inputLen, entryIndexer, entryLength);
-                        if (diff == 0)
-                        {
-                            sr.Position = entryIndexOffset - 4;
-                            return sr.ReadInt32();
-                        }
-                        else if (diff < 0)
-                        {
-                            sr.Position = entryIndexOffset + 4;
-                            return sr.ReadInt32();
-                        }
-
-                        min++;
-                    }
-
-                    return -1;
-                }
-
-                sr.Position = blockSize - (mid * 0x08);
+                sr.Position = entryItorOffset - 8;
                 entryOffset = sr.ReadInt16();
                 entryLength = sr.ReadInt16();
+
                 sr.Position = entryOffset;
                 entryIndexer = sr.ReadBytes(entryLength);
 
-                diff = DebugReader.CompareEntries(input, inputLen, entryIndexer, entryLength);
+                int diff = DebugReader.CompareEntries(input, inputLen, entryIndexer, entryLength);
                 if (diff == 0)
                 {
-                    // return the matching index
-                    sr.Position = blockSize - (mid * 0x08) + 4;
-                    return sr.ReadInt32();
+                    sr.Position = entryItorOffset - (8 + 4);
+                    return sr.ReadByte() | sr.ReadByte() << 8 | sr.ReadByte() << 16 | sr.ReadByte() << 24;
                 }
                 else if (diff > 0)
                     min = mid;
                 else
                     max = mid;
-
-                mid = (min + max) / 2;
             }
 
-            throw new Exception("Failed to bsearch for the block entry.");
+            // Last 8
+            while (min <= max)
+            {
+                int entryItorOffset = pageSize - (min * 0x08);
+                sr.Position = entryItorOffset - 8;
+                entryOffset = sr.ReadInt16();
+                entryLength = sr.ReadInt16();
+
+                sr.Position = entryOffset;
+                entryIndexer = sr.ReadBytes(entryLength);
+
+                int diff = DebugReader.CompareEntries(input, inputLen, entryIndexer, entryLength);
+                if (diff == 0)
+                {
+                    sr.Position = entryItorOffset - (8 + 4);
+                    return sr.ReadByte() | sr.ReadByte() << 8 | sr.ReadByte() << 16 | sr.ReadByte() << 24;
+                }
+
+                if (diff < 0)
+                {
+                    sr.Position = entryItorOffset - 4;
+                    return sr.ReadByte() | sr.ReadByte() << 8 | sr.ReadByte() << 16 | sr.ReadByte() << 24;
+                }
+
+                min++;
+            }
+
+
+            throw new Exception("Failed to bsearch the entry.");
+            return -1;
         }
 
-        public bool SearchEntry(byte[] input, int inputLen, out int result)
+        public bool SearchEntry(byte[] input, int inputLen, out int indexResult)
         {
-            result = 0;
+            indexResult = 0;
 
-            SpanReader sr = new SpanReader(BlockBuffer);
+            SpanReader sr = new SpanReader(PageBuffer);
             sr.Position = 2;
 
             int entryCount = sr.ReadInt16() / 2;
-            ushort blockSize = ParentVolume.GetBlockSize();
+            ushort pageSize = ParentVolume.GetPageSize();
 
             // Check first
-            sr.Position = blockSize - 0x08;
+            sr.Position = pageSize - 0x08;
             short entryOffset = sr.ReadInt16();
             short entryLength = sr.ReadInt16();
             sr.Position = entryOffset;
@@ -552,143 +537,121 @@ namespace GT4FS.Core
             int diff = DebugReader.CompareEntries(input, inputLen, entryIndexer, entryLength);
             if (diff < 0)
             {
-                result = 0;
-                return false;
-            }
-
-            // Check last
-            sr.Position = blockSize - (entryCount * 0x08);
-            entryOffset = sr.ReadInt16();
-            entryLength = sr.ReadInt16();
-            sr.Position = entryOffset;
-            entryIndexer = sr.ReadBytes(entryLength);
-            diff = DebugReader.CompareEntries(input, inputLen, entryIndexer, entryLength);
-            if (diff > 0)
-            {
-                result = -entryCount;
+                indexResult = 0;
                 return false;
             }
 
             int min = 0;
-            int max = entryCount;
-            int mid = (min + max) / 2;
+            int max = entryCount - 1;
 
-            while (min < max)
+            if (max >= 8)
             {
-                if (max - min < 8)
+                while (max - min >= 8)
                 {
-                    mid = min;
-                    int baseOffset = blockSize - (mid * 0x08);
-                    int entryitorOffset = baseOffset;
-                    if (max < min)
-                        return false;
+                    int mid = (min + max) / 2;
 
-                    while (min <= max)
+                    int baseOffset = pageSize - (mid * 0x08);
+                    sr.Position = baseOffset - 8;
+                    entryOffset = sr.ReadInt16();
+                    entryLength = sr.ReadInt16();
+
+                    sr.Position = entryOffset;
+                    entryIndexer = sr.ReadBytes(entryLength);
+
+                    diff = DebugReader.CompareEntries(input, inputLen, entryIndexer, entryLength);
+                    if (diff == 0)
                     {
-                        entryitorOffset -= 0x08;
-                        sr.Position = entryitorOffset;
-                        entryOffset = sr.ReadInt16();
-
-                        sr.Position = (mid * 0x08 - blockSize) + baseOffset + entryitorOffset;
-                        sr.Position += 2;
-
-                        entryLength = sr.ReadInt16();
-                        sr.Position = entryOffset;
-                        entryIndexer = sr.ReadBytes(entryLength);
-                        diff = DebugReader.CompareEntries(input, inputLen, entryIndexer, entryLength);
-                        if (diff < 1)
-                        {
-                            result = min;
-                            return diff == 0;
-                        }
-
-                        min++;
+                        indexResult = mid;
+                        return true;
                     }
-
-                    return false;
+                    else if (diff > 0)
+                        min = mid;
+                    else
+                        max = mid;
                 }
-
-                sr.Position = blockSize - (mid * 0x08);
-                entryOffset = sr.ReadInt16();
-                entryLength = sr.ReadInt16();
-                sr.Position = entryOffset;
-                entryIndexer = sr.ReadBytes(entryLength);
-
-                diff = DebugReader.CompareEntries(input, inputLen, entryIndexer, entryLength);
-                if (diff == 0)
-                {
-                    result = mid - 1;
-                    return true;
-                }
-                else if (diff > 0)
-                    min = mid;
-                else
-                    max = mid;
-
-                mid = (min + max) / 2;
             }
 
+            while (min <= max)
+            {
+                int baseOffset = pageSize - (min * 0x08);
+                sr.Position = baseOffset - 8;
+                entryOffset = sr.ReadInt16();
+                entryLength = sr.ReadInt16();
+
+                sr.Position = entryOffset;
+                entryIndexer = sr.ReadBytes(entryLength);
+                diff = DebugReader.CompareEntries(input, inputLen, entryIndexer, entryLength);
+                if (diff <= 0)
+                {
+                    indexResult = min;
+                    return diff == 0;
+                }
+
+                min++;
+            }
+            
             throw new Exception("Failed to bsearch the entry.");
+            return false;
         }
     }
 
     #region Non original classes, for debugging
-    public class BlockDebugInfo
+    public class PageDebugInfo
     {
-        public short BlockType { get; set; }
+        public short PageType { get; set; }
         public short EntryCount { get; set; }
         public int NextPage { get; set; }
         public int PrevPage { get; set; }
-        public bool IsMasterIndexBlock { get; set; }
-        public List<BlockDebugEntryInfo> Entries { get; set; }
+        public bool IsMasterIndexPage { get; set; }
+        public List<PageDebugEntryInfo> Entries { get; set; }
 
-        public BlockInfo Block { get; set; }
+        public PageInfo Page { get; set; }
 
-        public void ReadFromBlockInfo(BlockInfo block)
+        public void ReadFromPageInfo(PageInfo page)
         {
-            SpanReader sr = new SpanReader(block.BlockBuffer);
+            SpanReader sr = new SpanReader(page.PageBuffer);
 
-            BlockType = sr.ReadInt16();
+            PageType = sr.ReadInt16();
             EntryCount = sr.ReadInt16();
             NextPage = sr.ReadInt32();
             PrevPage = sr.ReadInt32();
-            Entries = new List<BlockDebugEntryInfo>(EntryCount / 2);
+            Entries = new List<PageDebugEntryInfo>(EntryCount / 2);
 
-            if (BlockType == 1 && NextPage == -1 && PrevPage == -1)
-                IsMasterIndexBlock = true;
+            if (PageType == 1 && NextPage == -1 && PrevPage == -1)
+                IsMasterIndexPage = true;
 
             for (int i = 0; i < EntryCount / 2; i++)
             {
-                sr.Position = block.ParentVolume.BlockSize - (i * 0x08) - 0x08;
-                BlockDebugEntryInfo entry = new BlockDebugEntryInfo();
-                entry.ReadFromBuffer(ref sr, BlockType == 1);
+                sr.Position = page.ParentVolume.PageSize - (i * 0x08) - 0x08;
+                PageDebugEntryInfo entry = new PageDebugEntryInfo();
+                entry.ReadFromBuffer(ref sr, PageType == 1);
                 Entries.Add(entry);
             }
         }
 
     }
 
-    public class BlockDebugEntryInfo
+    public class PageDebugEntryInfo
     {
         public short EntryOffset { get; set; }
         public short EntryLength { get; set; }
-        public int BlockIndex { get; set; }
+        public int PageIndex { get; set; }
 
         public byte[] IndexData { get; set; }
 
         public int ParentNode { get; set; }
         public string Name { get; set; }
 
-        public void ReadFromBuffer(ref SpanReader sr, bool isIndexBlock)
+        public void ReadFromBuffer(ref SpanReader sr, bool isIndexPage)
         {
             EntryOffset = sr.ReadInt16();
             EntryLength = sr.ReadInt16();
-            if (isIndexBlock)
-                BlockIndex = sr.ReadInt32();
+            if (isIndexPage)
+                PageIndex = sr.ReadInt32();
 
             sr.Position = EntryOffset;
 
-            if (isIndexBlock)
+            if (isIndexPage)
                 IndexData = sr.ReadBytes(EntryLength);
             else
             {

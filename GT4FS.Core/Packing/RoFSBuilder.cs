@@ -23,46 +23,36 @@ namespace GT4FS.Core.Packing
     /// </summary>
     public class RoFSBuilder
     {
-        /// <summary>
-        /// Whether or not to encrypt the volume header & toc. This is supported by the game.
-        /// </summary>
-        public bool Encrypt { get; set; } = true;
+
+
+
+        public const int ArbitraryLengthForToCToAvoidMerge = 0x2000000;
 
         /// <summary>
-        /// Whether or not to allow compressing files.
+        /// Size of each page. Defaults to 0x800.
         /// </summary>
-        public bool Compress { get; set; } = true;
-
-        public const int BlockHeaderSize = 0x0C;
-
-        public string InputFolder { get; set; }
-        public uint BaseRealTocOffset { get; set; }
-
-        /// <summary>
-        /// Size of each block. Defaults to 0x800.
-        /// </summary>
-        public int BlockSize { get; set; } = Volume.DefaultBlockSize;
+        public int PageSize { get; set; } = Volume.DefaultPageSize;
 
         /// <summary>
         /// The root of the folder structure - used to build the relationship between files.
         /// </summary>
-        public DirEntry RootTree { get; set; }
+        private DirEntry _rootTree { get; set; }
 
         // In-one-go entries of the whole file system for writing later on.
-        private List<Entry> _entries = new List<Entry>();
+        private List<Entry> _entriesToPack = new List<Entry>();
 
         // To keep track of which entry is currently being saved
         private int _currentEntry = 0;
 
-        public IndexBlock CurrentIndexBlock { get; set; }
-        public EntryBlock CurrentEntryBlock { get; set; }
+        public IndexPage CurrentIndexPage { get; set; }
+        public EntryDescriptorPage CurrentEntryPage { get; set; }
 
-        // List of all TOC blocks kept in memory to write the previous/next pages and page offsets later on.
-        public List<BlockBase> _blocks = new List<BlockBase>();
-        public List<IndexBlock> _indexBlocks = new List<IndexBlock>();
+        // List of all TOC pages kept in memory to write the previous/next pages and page offsets later on.
+        public List<PageBase> _pages = new List<PageBase>();
+        public List<IndexPage> _indexPage = new List<IndexPage>();
         
-        // If theres more than one index block, we need a main one that links to them
-        private IndexBlock _mainIndexBlock { get; set; }
+        // If theres more than one index page, we need a main one that links to them
+        private IndexPage _mainIndexPage { get; set; }
 
         // For writing the entry's page offsets
         private int _baseDataOffset;
@@ -70,22 +60,164 @@ namespace GT4FS.Core.Packing
         /// <summary>
         /// Current node ID.
         /// </summary>
-        public int CurrentID = 1;
+        private int _currentID = 1;
 
+        public const int PageHeaderSize = 0x0C;
+
+        public string InputFolder { get; set; }
+        public uint BaseRealTocOffset { get; private set; }
+
+        /// <summary>
+        /// Whether to avoid merging the ToC and the volume contents by arbitrarily setting a very large toc page size to fit the toc.
+        /// </summary>
+        public bool NoMergeTocMode { get; private set; }
+
+        public bool AppendToVolumeMode { get; private set; }
+
+        /// <summary>
+        /// For append mode
+        /// </summary>
+        public long BaseDataOffset { get; private set; }
+
+        /// <summary>
+        /// Whether or not to encrypt the volume header & toc. This is supported by the game.
+        /// </summary>
+        public bool Encrypt { get; private set; } = true;
+
+        /// <summary>
+        /// Whether or not to allow compressing files.
+        /// </summary>
+        public bool Compress { get; private set; } = true;
+
+
+
+        public void SetEncrypted(bool encrypted)
+           => Encrypt = encrypted;
+
+        public void SetAppendMode(bool appendMode, long baseDataOffset = -1)
+        {
+            AppendToVolumeMode = appendMode;
+            NoMergeTocMode = appendMode;
+            BaseDataOffset = baseDataOffset;
+        }
+   
+        public void SetNoMergeTocMode(bool noMerge)
+        {
+            NoMergeTocMode = noMerge;
+        }
+
+        public void SetCompressed(bool compress)
+           => Compress = compress;
+
+        public void SetPageSize(ushort pageSize)
+            => PageSize = pageSize;
+
+        /// <summary>
+        /// Registers all the files to pack in volume scratch building mode.
+        /// </summary>
+        /// <param name="inputFolder"></param>
         public void RegisterFilesToPack(string inputFolder)
         {
             Console.WriteLine($"Indexing '{Path.GetFullPath(inputFolder)}' to find files to pack.. ");
             InputFolder = Path.GetFullPath(inputFolder);
 
-            RootTree = new DirEntry(".");
-            RootTree.NodeID = CurrentID++;
+            _rootTree = new DirEntry(".");
+            _rootTree.NodeID = _currentID++;
 
-            _entries.Add(RootTree);
+            _entriesToPack.Add(_rootTree);
 
-            Import(RootTree, InputFolder);
-            TraverseBuildEntryPackList(RootTree);
+            ImportFolder(_rootTree, InputFolder, InputFolder);
+            TraverseBuildFileEntryList(_entriesToPack, _rootTree);
 
-            Console.WriteLine($"Found {_entries.Count(e => e.EntryType != VolumeEntryType.Directory)} files to pack.");
+            Console.WriteLine($"Found {_entriesToPack.Count(e => e.EntryType != VolumeEntryType.Directory)} files to pack.");
+        }
+
+        /// <summary>
+        /// Registers all the files to pack in volume appending mode.
+        /// </summary>
+        /// <param name="originalBTree"></param>
+        /// <param name="appendFilesPath"></param>
+        public void RegisterFilesFromBTree(BTree originalBTree, string appendFilesPath)
+        {
+            var tocNodes = originalBTree.GetNodes().ToList();
+            _rootTree = tocNodes[0] as DirEntry;
+
+            // Build file tree of our mod path
+            var appendModTree = new DirEntry(".");
+            appendModTree.NodeID = _currentID++;
+
+            var flattenedTree = new List<Entry>();
+            flattenedTree.Add(appendModTree);
+            ImportFolder(appendModTree, appendFilesPath, appendFilesPath);
+            TraverseBuildFileEntryList(flattenedTree, appendModTree);
+
+            // Merge the trees
+            MergeDirEntries(_rootTree, appendModTree, "");
+
+            // Reassign IDs for the combined tree
+            _currentID = 1;
+            RelinkDirIDs(_rootTree);
+
+            // Build the final flattened list
+            _entriesToPack.Add(_rootTree);
+            TraverseBuildFileEntryList(_entriesToPack, _rootTree);
+        }
+
+        /// <summary>
+        /// Merges two trees together (used for append mode).
+        /// </summary>
+        /// <param name="parentTocEntry"></param>
+        /// <param name="parentAppendDirEntry"></param>
+        /// <param name="volPath"></param>
+        private void MergeDirEntries(DirEntry parentTocEntry, DirEntry parentAppendDirEntry, string volPath)
+        {
+            foreach (var entryToAppend in parentAppendDirEntry.ChildEntries)
+            {
+                // Path exists in 
+                if (parentTocEntry.ChildEntries.TryGetValue(entryToAppend.Key, out Entry tocEntry))
+                {
+                    if (tocEntry.EntryType == VolumeEntryType.Directory)
+                    {
+                        MergeDirEntries(tocEntry as DirEntry, entryToAppend.Value as DirEntry, volPath + tocEntry.Name + "/");
+                    }
+                    else
+                    {
+                        // File already exists in toc, we are overwriting it
+                        parentTocEntry.ChildEntries[entryToAppend.Key] = entryToAppend.Value;
+                        entryToAppend.Value.IsModFileAppendToVolumeEnd = true;
+                        Console.WriteLine($"Overwriting file - {volPath + entryToAppend.Value.Name}");
+                    }
+                }
+                else
+                {
+                    // New file or directory
+                    // Children will be automatically re-ordered by the sorted dictionary
+                    entryToAppend.Value.IsModFileAppendToVolumeEnd = true;
+                    parentTocEntry.ChildEntries.Add(entryToAppend.Key, entryToAppend.Value);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Refreshes and reestablishes node ids & parent nodes (used for append mode).
+        /// </summary>
+        /// <param name="parentEntry"></param>
+        private void RelinkDirIDs(DirEntry parentEntry)
+        {
+            foreach (var entry in parentEntry.ChildEntries)
+            {
+                if (entry.Value.EntryType == VolumeEntryType.Directory)
+                {
+                    entry.Value.NodeID = ++_currentID;
+                    RelinkDirIDs((DirEntry)entry.Value);
+                }
+                else
+                {
+                    entry.Value.NodeID = ++_currentID;
+                }
+
+                entry.Value.ParentNode = parentEntry.NodeID;
+            }
         }
 
         /// <summary>
@@ -94,70 +226,93 @@ namespace GT4FS.Core.Packing
         /// <param name="outputFile"></param>
         public void Build(string outputFile, uint baseRealTocOffset)
         {
-            Console.WriteLine("Building volume.");
-            BaseRealTocOffset = baseRealTocOffset;
-            using var fs = new FileStream(outputFile, FileMode.Create);
-            using var volStream = new BinaryStream(fs);
+            if (!AppendToVolumeMode)
+                Console.WriteLine("Building volume.");
+            else
+                Console.WriteLine("Appending files to volume.");
 
-            // Write fake 2.2 TOC. Polyphony wrote a fake toc to make people think GT3 tools worked on it.
-            // The start offset is constant and writen into the executables as a page offset.
+            BaseRealTocOffset = baseRealTocOffset;
+
+            BinaryStream volStream;
+            if (AppendToVolumeMode)
+            {
+                var fs = File.Open(outputFile, FileMode.Open, FileAccess.ReadWrite);
+                volStream = new BinaryStream(fs);
+            }
+            else
+            {
+                var fs = File.Open(outputFile, FileMode.Create);
+                volStream = new BinaryStream(fs);
+            }
+
+            BuildVolumeToCAndContents(volStream);
+
+            if (!AppendToVolumeMode)
+                Console.WriteLine("Done. Files appended to existing volume and ToC rewritten.");
+            else
+                Console.WriteLine($"Done, folder packed to {Path.GetFullPath(outputFile)}.");
+
+            volStream.Dispose();
+        }
+
+        private static void WriteFakeToC(BinaryStream volStream)
+        {
             volStream.WriteInt32(TocHeader.MagicValueEncrypted, ByteConverter.Big);
 
             // 2.2
             volStream.WriteInt16(2); // Version Minor
             volStream.WriteInt16(2); // Version Major
-
-            volStream.BaseStream.Seek(BaseRealTocOffset, SeekOrigin.Begin);
-
-            BuildRealTOC(volStream);
-
-            Console.WriteLine($"Done, folder packed to {Path.GetFullPath(outputFile)}.");
         }
 
-        public void SetEncrypted(bool encrypted)
-           => Encrypt = encrypted;
-
-        public void SetCompressed(bool compress)
-           => Compress = compress;
-
-        public void SetBlockSize(ushort blockSize)
-            => BlockSize = blockSize;
 
         /// <summary>
-        /// Builds the real table of contents.
+        /// Builds the real table of contents and links the data with it.
         /// </summary>
         /// <param name="volStream"></param>
-        private void BuildRealTOC(BinaryStream volStream)
+        private void BuildVolumeToCAndContents(BinaryStream volStream)
         {
-            if (Encrypt)
-                volStream.WriteInt32(TocHeader.MagicValueEncrypted, ByteConverter.Big);
-            else
-                volStream.WriteString(TocHeader.Magic, StringCoding.Raw);
+            // Write fake 2.2 TOC. Polyphony wrote a fake toc to make people think GT3 tools worked on it.
+            // The start offset is constant and writen into the executables as a page offset.
+            WriteFakeToC(volStream);
 
-            volStream.WriteInt32(TocHeader.Version3_1);
-
-            // Skip the block toc as it can't be written for now
+            // Skip the page toc as it can't be written for now
             volStream.BaseStream.Position = BaseRealTocOffset + TocHeader.HeaderSize;
 
             try
             {
-                // Start writing the files.
-                WriteFiles();
+                if (!AppendToVolumeMode)
+                {
+                    Console.WriteLine("Writing files into new volume.");
+
+                    // Start writing the files to our new scratch VOL to a seperate file that will be merged to the toc later on.
+                    WriteVolumeContents(volStream);
+                }
+                else
+                {
+                    // Move files that need to be moved because of the general ToC page space pushed forwards.
+                    MoveFilesOverlappingOldTocPagesForAppendMode(volStream);
+
+                    // Process files that we are overwritting or adding to the volume.
+                    WriteAppendingFiles(volStream);
+                }
 
                 // Write all the file & directory entries
-                WriteBlocks();
+                BuildToCPages();
 
-                // We've got enough to build the header and merge blocks together now
-                BuildTocHeader(volStream);
+                // We've got enough to build the header and merge pages together now
+                WriteToCHeader(volStream);
 
-                // Merge toc and file blob.
-                using var fs = new FileStream("gtfiles.temp", FileMode.Open);
-                Console.WriteLine($"Merging Data and ToC... ({Utils.BytesToString(fs.Length)})");
+                if (!NoMergeTocMode)
+                {
+                    // Merge toc and file blob.
+                    using var fs = new FileStream("gtfiles.temp", FileMode.Open);
+                    Console.WriteLine($"Merging Data and ToC... ({Utils.BytesToString(fs.Length)})");
 
-                int count = 0;
-                byte[] buffer = new byte[32_768];
-                while ((count = fs.Read(buffer, 0, buffer.Length)) > 0)
-                    volStream.BaseStream.Write(buffer, 0, count);
+                    int count = 0;
+                    byte[] buffer = new byte[0x200000];
+                    while ((count = fs.Read(buffer, 0, buffer.Length)) > 0)
+                        volStream.BaseStream.Write(buffer, 0, count);
+                }
             }
             catch (Exception e)
             {
@@ -170,75 +325,196 @@ namespace GT4FS.Core.Packing
             }
         }
 
-        private void BuildTocHeader(BinaryStream volStream)
+        /// <summary>
+        /// For append mode
+        /// </summary>
+        /// <param name="volStream"></param>
+        private void MoveFilesOverlappingOldTocPagesForAppendMode(BinaryStream volStream)
+        {
+            foreach (var entry in _entriesToPack)
+            {
+                if (entry.IsModFileAppendToVolumeEnd)
+                    continue; // We'll do these after
+
+                long fileOffset, fileSize;
+                if (entry.EntryType == VolumeEntryType.CompressedFile)
+                {
+                    var compFile = entry as CompressedFileEntry;
+                    fileOffset = (long)compFile.PageOffset * PageSize;
+                    fileSize = compFile.CompressedSize;
+                }
+                else if (entry.EntryType == VolumeEntryType.File)
+                {
+                    var fileEntry = entry as FileEntry;
+                    fileOffset = (long)fileEntry.PageOffset * PageSize;
+                    fileSize = fileEntry.Size;
+                }
+                else
+                    continue;
+
+                int filePageOffset;
+                if (_baseDataOffset + fileOffset < ArbitraryLengthForToCToAvoidMerge)
+                {
+                    Console.WriteLine($"Moving '{entry.Name}' to end of volume to avoid overlapping with new ToC.");
+
+                    // This file is behind the pre-allocated space required for the toc, move it to end of volume
+                    volStream.BaseStream.Position = BaseDataOffset + fileOffset;
+                    byte[] buffer = new byte[fileSize];
+                    volStream.Read(buffer);
+                    volStream.Position = volStream.Length;
+
+                    filePageOffset = (int)((volStream.Length - ArbitraryLengthForToCToAvoidMerge) / PageSize);
+
+                    volStream.Write(buffer, 0, buffer.Length);
+                    volStream.Align(PageSize, grow: true);
+                }
+                else
+                {
+                    // Adjust file's page offset
+                    filePageOffset = (int)((fileOffset - (ArbitraryLengthForToCToAvoidMerge - BaseDataOffset)) / PageSize);
+                }
+
+                if (entry.EntryType == VolumeEntryType.CompressedFile)
+                    (entry as CompressedFileEntry).PageOffset = filePageOffset;
+                else if (entry.EntryType == VolumeEntryType.File)
+                    (entry as FileEntry).PageOffset = filePageOffset;
+            }
+        }
+
+        private void WriteAppendingFiles(BinaryStream bs)
+        {
+            Console.WriteLine("Appending files to volume.");
+            bs.Position = bs.Length;
+            foreach (var entry in _entriesToPack)
+            {
+                if (!entry.IsModFileAppendToVolumeEnd)
+                    continue;
+
+                var m = _entriesToPack.ToList().Where(e => e is FileEntry).Max(e => (e as FileEntry).PageOffset);
+                using var file = File.Open(entry.AbsolutePath, FileMode.Open);
+                if (entry.EntryType == VolumeEntryType.CompressedFile)
+                {
+                    CompressedFileEntry compFile = entry as CompressedFileEntry;
+                    Console.WriteLine($"Compressing at volume end: {entry.VolumePath} [{Utils.BytesToString(compFile.Size)}]");
+
+                    compFile.PageOffset = (int)((bs.BaseStream.Length - ArbitraryLengthForToCToAvoidMerge) / PageSize);
+                    long compressedSize = Compression.PS2ZIPCompressInto(file, bs);
+                    compFile.CompressedSize = (int)compressedSize;
+                }
+                else
+                {
+                    Console.WriteLine($"Writing at volume end: {entry.VolumePath} [{Utils.BytesToString(((FileEntry)entry).Size)}]");
+
+                    ((FileEntry)entry).PageOffset = (int)((bs.BaseStream.Length - ArbitraryLengthForToCToAvoidMerge) / PageSize);
+                    file.CopyTo(bs);
+                }
+
+                bs.Align(PageSize, grow: true);
+            }
+        }
+
+        private void WriteToCHeader(BinaryStream volStream)
         {
             volStream.Position = BaseRealTocOffset + TocHeader.HeaderSize;
-            int blockCount = _blocks.Count;
+            int pageCount = _pages.Count;
 
             // The game will subtract the current and next offset to 
-            // determine the length of a block, thus the extra one will be the boundary
-            volStream.Position += 4 * blockCount;
+            // determine the length of a page, thus the extra one will be the boundary
+            volStream.Position += 4 * pageCount;
             volStream.Position += 4;
 
-            // Actually write the toc blocks.
-            for (int i = 0; i < blockCount; i++)
+            // Actually write the toc pages.
+            for (int i = 0; i < pageCount; i++)
             {
-                int blockOffset = (int)(volStream.Position - BaseRealTocOffset);
+                int pageOffset = (int)(volStream.Position - BaseRealTocOffset);
 
-                byte[] block = _blocks[i].Buffer;
-                byte[] copy = new byte[block.Length];
-                Span<byte> copySpan = copy.AsSpan(0, block.Length);
-                block.AsSpan().CopyTo(copySpan);
+                byte[] page = _pages[i].Buffer;
+                byte[] copy = new byte[page.Length];
+                Span<byte> copySpan = copy.AsSpan(0, page.Length);
+                page.AsSpan().CopyTo(copySpan);
 
                 if (Encrypt)
                     Utils.XorEncryptFast(copySpan, 0x55);
-                var blockComp = PS2Zip.ZlibCodecCompress(copy);
+                var pageComp = PS2Zip.ZlibCodecCompress(copy);
 
-                volStream.WriteBytes(blockComp);
+                volStream.WriteBytes(pageComp);
 
                 using (volStream.TemporarySeek(BaseRealTocOffset + TocHeader.HeaderSize + (i * 4), SeekOrigin.Begin))
-                    volStream.WriteInt32(Encrypt ? EncryptOffset(blockOffset, i) : blockOffset);
-                    
+                    volStream.WriteInt32(Encrypt ? EncryptOffset(pageOffset, i) : pageOffset);
             }
 
             int tocLength = (int)(volStream.Position - BaseRealTocOffset);
-            volStream.Align(BlockSize, grow: true);
+
+
+            if (NoMergeTocMode)
+            {
+                // Align to a really large offset so that our data offset is late - so we don't have to merge the data and toc
+                volStream.Position = ArbitraryLengthForToCToAvoidMerge;
+            }
+            else
+                volStream.Align(PageSize, grow: true);
 
             // Write the final offset
             _baseDataOffset = (int)(volStream.Position - BaseRealTocOffset);
-            using (volStream.TemporarySeek(BaseRealTocOffset + TocHeader.HeaderSize + (blockCount * 4), SeekOrigin.Begin))
-                volStream.WriteInt32(Encrypt ? EncryptOffset(tocLength, blockCount) : tocLength);
+            using (volStream.TemporarySeek(BaseRealTocOffset + TocHeader.HeaderSize + (pageCount * 4), SeekOrigin.Begin))
+                volStream.WriteInt32(Encrypt ? EncryptOffset(tocLength, pageCount) : tocLength);
 
-            // Finish up actual header
-            using (volStream.TemporarySeek(BaseRealTocOffset + 8, SeekOrigin.Begin))
+            // Build main volume header.
+            using (volStream.TemporarySeek(BaseRealTocOffset, SeekOrigin.Begin))
             {
-                int pageCount = _baseDataOffset / BlockSize;
+                if (Encrypt)
+                    volStream.WriteInt32(TocHeader.MagicValueEncrypted, ByteConverter.Big);
+                else
+                    volStream.WriteString(TocHeader.Magic, StringCoding.Raw);
+                volStream.WriteInt32(TocHeader.Version3_1);
+
+                int tocPageCount = _baseDataOffset / PageSize;
                 volStream.WriteInt32(tocLength);
-                volStream.WriteInt32(pageCount);
-                volStream.WriteUInt16((ushort)BlockSize);
-                volStream.WriteUInt16((ushort)blockCount);
+                volStream.WriteInt32(tocPageCount);
+                volStream.WriteUInt16((ushort)PageSize);
+                volStream.WriteUInt16((ushort)pageCount);
             }
         }
 
-        private void WriteFiles()
+        private void WriteVolumeContents(BinaryStream volStream)
         {
-            using var fs = new FileStream("gtfiles.temp", FileMode.Create);
-            using var bs = new BinaryStream(fs);
+            BinaryStream bs;
+            if (!NoMergeTocMode)
+            {
+                Console.WriteLine("Writing temporary contents file to merge with ToC later.");
+
+                // Traditional, accurate RoFS building where the data is immediately after the ToC.
+                // Therefore, it needs to be merged.
+                var fs = new FileStream("gtfiles.temp", FileMode.Create);
+                bs = new BinaryStream(fs);
+            }
+            else
+            {
+                Console.WriteLine("Not merging ToC and data (merge mode enabled)");
+
+                // "Hack" where we set the ToC pretty far so that we don't have to merge the ToC and data
+                bs = volStream;
+                volStream.BaseStream.Position = ArbitraryLengthForToCToAvoidMerge;
+            }
 
             int i = 1;
-            int count = _entries.Count(c => c.EntryType != VolumeEntryType.Directory);
+            int count = _entriesToPack.Count(c => c.EntryType != VolumeEntryType.Directory);
 
-            WriteDirectory(bs, RootTree, "", ref i, ref count);
+            WriteDirectory(bs, _rootTree, "", volStream.BaseStream.Position, ref i, ref count);
+
+            if (!NoMergeTocMode)
+                bs.Dispose(); // Clean up temp file
         }
 
-        private void WriteDirectory(BinaryStream fileWriter, DirEntry parentDir, string path, ref int currentIndex, ref int count)
+        private void WriteDirectory(BinaryStream fileWriter, DirEntry parentDir, string path, long baseDataPos, ref int currentIndex, ref int count)
         {
-            foreach (var entry in parentDir.ChildEntries)
+            foreach (var entryKV in parentDir.ChildEntries)
             {
+                var entry = entryKV.Value;
                 if (entry.EntryType == VolumeEntryType.Directory)
                 {
                     string subPath = string.IsNullOrEmpty(path) ? entry.Name : $"{path}/{entry.Name}";
-                    WriteDirectory(fileWriter, (DirEntry)entry, subPath, ref currentIndex, ref count);
+                    WriteDirectory(fileWriter, (DirEntry)entry, subPath, baseDataPos, ref currentIndex, ref count);
                 }
                 else
                 {
@@ -248,12 +524,12 @@ namespace GT4FS.Core.Packing
                     if (entry.EntryType == VolumeEntryType.File)
                     {
                         entrySize = ((FileEntry)entry).Size;
-                        ((FileEntry)entry).PageOffset = (int)Math.Round((double)(fileWriter.Position / BlockSize), MidpointRounding.AwayFromZero);
+                        ((FileEntry)entry).PageOffset = (int)Math.Round((double)((fileWriter.Position - baseDataPos) / PageSize), MidpointRounding.AwayFromZero);
                     }
                     else if (entry.EntryType == VolumeEntryType.CompressedFile)
                     {
                         entrySize = ((CompressedFileEntry)entry).Size;
-                        ((CompressedFileEntry)entry).PageOffset = (int)Math.Round((double)(fileWriter.Position / BlockSize), MidpointRounding.AwayFromZero);
+                        ((CompressedFileEntry)entry).PageOffset = (int)Math.Round((double)((fileWriter.Position - baseDataPos) / PageSize), MidpointRounding.AwayFromZero);
                     }
 
                     using var file = File.Open(Path.Combine(InputFolder, filePath), FileMode.Open);
@@ -274,7 +550,7 @@ namespace GT4FS.Core.Packing
                         file.CopyTo(fileWriter);
                     }
 
-                    fileWriter.Align(BlockSize, grow: true);
+                    fileWriter.Align(PageSize, grow: true);
                     currentIndex++;
                 }
             }
@@ -284,202 +560,202 @@ namespace GT4FS.Core.Packing
             => offset ^ index * Volume.OffsetCryptKey + Volume.OffsetCryptKey;
 
         /// <summary>
-        /// Serializes all the entries into toc data blocks.
+        /// Serializes all the entries into toc data page.
         /// </summary>
         /// <returns></returns>
-        private void WriteBlocks()
+        private void BuildToCPages()
         {
-            CurrentIndexBlock = new IndexBlock(BlockSize);
-            CurrentEntryBlock = new EntryBlock(BlockSize);
+            CurrentIndexPage = new IndexPage(PageSize);
+            CurrentEntryPage = new EntryDescriptorPage(PageSize);
 
-            // Used to keep track of where the last index block is so we add it 
-            // before the new entry blocks, every time
-            int lastIndexBlockPos = 0;
+            // Used to keep track of where the last index page is so we add it 
+            // before the new entry pages, every time
+            int lastIndexPagePos = 0;
 
             Entry entry;
-            while (_currentEntry < _entries.Count)
+            while (_currentEntry < _entriesToPack.Count)
             {
-                entry = _entries[_currentEntry];
+                entry = _entriesToPack[_currentEntry];
 
-                // Write to the next index block
-                if (CurrentEntryBlock.HasSpaceToWriteEntry(entry))
-                    CurrentEntryBlock.WriteEntry(entry);
+                // Write to the next index page
+                if (CurrentEntryPage.HasSpaceToWriteEntry(entry))
+                    CurrentEntryPage.WriteEntry(entry);
                 else
                 {
-                    CurrentEntryBlock.FinalizeHeader();
-                    CurrentEntryBlock.LastEntry = _entries[_currentEntry - 1];
+                    CurrentEntryPage.FinalizeHeader();
+                    CurrentEntryPage.LastEntry = _entriesToPack[_currentEntry - 1];
 
-                    // Entry block has ran out of space - insert it in the index block if we can
-                    if (CurrentIndexBlock.HasSpaceToWriteEntry(_entries[_currentEntry - 1], entry))
-                        CurrentIndexBlock.WriteNextDataEntry(_entries[_currentEntry - 1], entry);
+                    // Entry page has ran out of space - insert it in the index page if we can
+                    if (CurrentIndexPage.HasSpaceToWriteEntry(_entriesToPack[_currentEntry - 1], entry))
+                        CurrentIndexPage.WriteNextDataEntry(_entriesToPack[_currentEntry - 1], entry);
                     else
                     {
                         // Dirty hack - we don't need the last one
-                        CurrentIndexBlock.EntryCount--;
+                        CurrentIndexPage.EntryCount--;
 
                         // Index also ran out of space? Well new one
-                        CurrentIndexBlock.FinalizeHeader();
+                        CurrentIndexPage.FinalizeHeader();
 
                         // Keep track of the cutoff
-                        CurrentIndexBlock.PrevBlockLastEntry = _entries[_currentEntry - 1];
-                        CurrentIndexBlock.NextBlockFirstEntry = entry;
+                        CurrentIndexPage.PrevPageLastEntry = _entriesToPack[_currentEntry - 1];
+                        CurrentIndexPage.NextPageFirstEntry = entry;
 
-                        _blocks.Insert(lastIndexBlockPos, CurrentIndexBlock);
-                        _indexBlocks.Add(CurrentIndexBlock);
+                        _pages.Insert(lastIndexPagePos, CurrentIndexPage);
+                        _indexPage.Add(CurrentIndexPage);
 
-                        var newIndexBlock = new IndexBlock(BlockSize);
-                        newIndexBlock.PreviousBlock = CurrentIndexBlock;
-                        CurrentIndexBlock.NextBlock = newIndexBlock;
-                        CurrentIndexBlock = newIndexBlock;
-                        lastIndexBlockPos = _blocks.Count;
+                        var newIndexPage = new IndexPage(PageSize);
+                        newIndexPage.PreviousPage = CurrentIndexPage;
+                        CurrentIndexPage.NextPage = newIndexPage;
+                        CurrentIndexPage = newIndexPage;
+                        lastIndexPagePos = _pages.Count;
 
-                        CurrentIndexBlock.WriteNextDataEntry(_entries[_currentEntry - 1], entry);
+                        CurrentIndexPage.WriteNextDataEntry(_entriesToPack[_currentEntry - 1], entry);
                     }
 
-                    _blocks.Add(CurrentEntryBlock);
-                    var newEntryBlock = new EntryBlock(BlockSize);
-                    newEntryBlock.PreviousBlock = CurrentEntryBlock;
-                    CurrentEntryBlock.NextBlock = newEntryBlock;
-                    CurrentEntryBlock = newEntryBlock;
-                    CurrentEntryBlock.WriteEntry(entry);
+                    _pages.Add(CurrentEntryPage);
+                    var newEntryPage = new EntryDescriptorPage(PageSize);
+                    newEntryPage.PreviousPage = CurrentEntryPage;
+                    CurrentEntryPage.NextPage = newEntryPage;
+                    CurrentEntryPage = newEntryPage;
+                    CurrentEntryPage.WriteEntry(entry);
                 }
 
-                if (_currentEntry == _entries.Count - 1)
+                if (_currentEntry == _entriesToPack.Count - 1)
                 {
-                    CurrentEntryBlock.LastEntry = _entries[_currentEntry - 1];
+                    CurrentEntryPage.LastEntry = _entriesToPack[_currentEntry - 1];
 
-                    if (CurrentIndexBlock.EntryCount == 0)
+                    if (CurrentIndexPage.EntryCount == 0)
                     {
-                        _blocks.Remove(CurrentIndexBlock);
-                        _indexBlocks.Remove(CurrentIndexBlock);
-                        CurrentIndexBlock = null;
+                        _pages.Remove(CurrentIndexPage);
+                        _indexPage.Remove(CurrentIndexPage);
+                        CurrentIndexPage = null;
                     }
-                    else if (!_blocks.Contains(CurrentIndexBlock))
+                    else if (!_pages.Contains(CurrentIndexPage))
                     {
-                        _blocks.Insert(lastIndexBlockPos, CurrentIndexBlock);
-                        _indexBlocks.Add(CurrentIndexBlock);
+                        _pages.Insert(lastIndexPagePos, CurrentIndexPage);
+                        _indexPage.Add(CurrentIndexPage);
                     }
 
                     // If needed
-                    CurrentEntryBlock.FinalizeHeader();
-                    CurrentIndexBlock.FinalizeHeader();
+                    CurrentEntryPage.FinalizeHeader();
+                    CurrentIndexPage.FinalizeHeader();
                 }
 
                 _currentEntry++;
             }
 
-            // If nothing was writen in the new blocks, just discard them
-            FinalizeBlocks();
+            // If nothing was writen in the new pages, just discard them
+            FinalizeToCPages();
 
-            // Is there more than one index block? If so we may need to write a master one
-            CreateMainIndexBlockIfNeeded();
+            // Is there more than one index page? If so we may need to write a master one
+            CreateMainIndexPageIfNeeded();
 
-            // Link all the relational blocks together
-            AssignBlockLinks();
+            // Link all the relational pages together
+            AssignPageLinks();
 
-            // Point index blocks to their child block
-            if (_mainIndexBlock != null)
+            // Point index pages to their child page
+            if (_mainIndexPage != null)
             {
-                SpanWriter sw = new SpanWriter(_mainIndexBlock.Buffer);
+                SpanWriter sw = new SpanWriter(_mainIndexPage.Buffer);
 
-                // This will include the terminator
-                for (int i = 0; i < _indexBlocks.Count; i++)
+                // This will include the entry terminator we haven't written earlier
+                for (int i = 0; i < _indexPage.Count; i++)
                 {
-                    var indexBlock = _indexBlocks[i];
-                    sw.Position = BlockSize - ((i + 1) * 0x08);
+                    var indexPage = _indexPage[i];
+                    sw.Position = PageSize - ((i + 1) * 0x08);
                     sw.Position += 4;
-                    sw.WriteInt32(indexBlock.BlockIndex);
+                    sw.WriteInt32(indexPage.PageIndex);
                 }
             }
 
-            for (int i = 0; i < _indexBlocks.Count; i++)
+            for (int i = 0; i < _indexPage.Count; i++)
             {
-                var indexBlock = _indexBlocks[i];
-                int pageIndex = indexBlock.BlockIndex;
+                var indexPage = _indexPage[i];
+                int pageIndex = indexPage.PageIndex;
 
-                SpanWriter sw = new SpanWriter(indexBlock.Buffer);
-                for (int j = 0; j < indexBlock.EntryCount; j++)
+                SpanWriter sw = new SpanWriter(indexPage.Buffer);
+                for (int j = 0; j < indexPage.EntryCount; j++)
                 {
-                    sw.Position = BlockSize - ((j + 1) * 0x08);
+                    sw.Position = PageSize - ((j + 1) * 0x08);
                     sw.Position += 4;
                     sw.WriteInt32(pageIndex + 1 + j);
                 }
 
-                // Write last block terminator
-                sw.Position = BlockSize - ((indexBlock.EntryCount + 1) * 0x08);
+                // Write last page terminator
+                sw.Position = PageSize - ((indexPage.EntryCount + 1) * 0x08);
                 sw.Position += 4;
-                sw.WriteInt32(pageIndex + indexBlock.EntryCount + 1);
+                sw.WriteInt32(pageIndex + indexPage.EntryCount + 1);
             }
         }
 
-        private void FinalizeBlocks()
+        private void FinalizeToCPages()
         {
-            // If nothing was writen in the last blocks, just null them
-            if (CurrentEntryBlock.EntryCount == 0)
+            // If nothing was writen in the last pages, just null them
+            if (CurrentEntryPage.EntryCount == 0)
             {
-                _blocks.Remove(CurrentEntryBlock);
-                CurrentEntryBlock = null;
+                _pages.Remove(CurrentEntryPage);
+                CurrentEntryPage = null;
             }
             else
             {
-                if (!_blocks.Contains(CurrentEntryBlock))
-                    _blocks.Add(CurrentEntryBlock);
+                if (!_pages.Contains(CurrentEntryPage))
+                    _pages.Add(CurrentEntryPage);
             }
         }
 
-        private void AssignBlockIndexes()
+        private void AssignPageIndices()
         {
-            for (int i = 0; i < _blocks.Count; i++)
-                _blocks[i].BlockIndex = i;
+            for (int i = 0; i < _pages.Count; i++)
+                _pages[i].PageIndex = i;
         }
 
-        private void CreateMainIndexBlockIfNeeded()
+        private void CreateMainIndexPageIfNeeded()
         {
-            if (_indexBlocks.Count > 1)
+            if (_indexPage.Count > 1)
             {
-                _mainIndexBlock = new IndexBlock(BlockSize);
-                _mainIndexBlock.IsMasterBlock = true;
-                _blocks.Insert(0, _mainIndexBlock);
+                _mainIndexPage = new IndexPage(PageSize);
+                _mainIndexPage.IsMasterPage = true;
+                _pages.Insert(0, _mainIndexPage);
 
-                AssignBlockIndexes();
+                AssignPageIndices();
 
                 // We only need the middles.
-                for (int i = 0; i < _indexBlocks.Count; i++)
+                for (int i = 0; i < _indexPage.Count; i++)
                 {                    
-                    IndexBlock indexBlock = _indexBlocks[i];
-                    var nextIndexBlock = indexBlock.NextBlock as IndexBlock;
-                    if (nextIndexBlock is null) 
+                    IndexPage indexPage = _indexPage[i];
+                    var nextIndexPage = indexPage.NextPage as IndexPage;
+                    if (nextIndexPage is null) 
                         break;
 
-                    Entry lastPrev = (_blocks[nextIndexBlock.BlockIndex - 1] as EntryBlock).LastEntry;
+                    Entry lastPrev = (_pages[nextIndexPage.PageIndex - 1] as EntryDescriptorPage).LastEntry;
 
-                    if (indexBlock.BlockIndex + 1 >= _blocks.Count)
+                    if (indexPage.PageIndex + 1 >= _pages.Count)
                         break;
 
-                    Entry firstNext = (_blocks[nextIndexBlock.BlockIndex + 1] as EntryBlock).FirstEntry;
-                    _mainIndexBlock.WriteNextDataEntry(lastPrev, firstNext);
+                    Entry firstNext = (_pages[nextIndexPage.PageIndex + 1] as EntryDescriptorPage).FirstEntry;
+                    _mainIndexPage.WriteNextDataEntry(lastPrev, firstNext);
                 }
 
-                _mainIndexBlock.FinalizeHeader();
+                _mainIndexPage.FinalizeHeader();
             }
             else
-                AssignBlockIndexes();
+                AssignPageIndices();
         }
 
-        private void AssignBlockLinks()
+        private void AssignPageLinks()
         {
-            for (int i = 0; i < _blocks.Count; i++)
+            for (int i = 0; i < _pages.Count; i++)
             {
-                var block = _blocks[i];
-                if (block is IndexBlock indexBlock && indexBlock.IsMasterBlock)
+                var page = _pages[i];
+                if (page is IndexPage indexPage && indexPage.IsMasterPage)
                 {
-                    indexBlock.WriteNextPage(-1);
-                    indexBlock.WritePreviousPage(-1);
+                    indexPage.WriteNextPage(-1);
+                    indexPage.WritePreviousPage(-1);
                 }
                 else
                 {
-                    block.WriteNextPage(block.NextBlock?.BlockIndex ?? -1);
-                    block.WritePreviousPage(block.PreviousBlock?.BlockIndex ?? -1);
+                    page.WriteNextPage(page.NextPage?.PageIndex ?? -1);
+                    page.WritePreviousPage(page.PreviousPage?.PageIndex ?? -1);
                 }
             }
         }
@@ -489,29 +765,38 @@ namespace GT4FS.Core.Packing
         /// </summary>
         /// <param name="parent"></param>
         /// <param name="folder"></param>
-        private void Import(DirEntry parent, string folder)
+        private void ImportFolder(DirEntry parent, string rootFolder, string folder)
         {
+            string folderVolumePath;
+            if (rootFolder == folder) // Root
+                folderVolumePath = "";
+            else
+                folderVolumePath = folder.Substring(rootFolder.Length + 1);
+
             var dirEntries = Directory.EnumerateFileSystemEntries(folder)
                 .OrderBy(e => e, StringComparer.Ordinal).ToList();
 
             foreach (var path in dirEntries)
             {
+                if (path.EndsWith("extract.log"))
+                    continue;
+
                 Entry entry;
 
                 string relativePath = path.Substring(folder.Length + 1);
+                string absolutePath = Path.Combine(folder, relativePath);
+                string entryVolumePath = absolutePath.Substring(rootFolder.Length + 1);
+
                 if (File.GetAttributes(path).HasFlag(FileAttributes.Directory))
                 {
                     entry = new DirEntry(relativePath);
-                    entry.NodeID = CurrentID++;
-                    Import((DirEntry)entry, path);
+                    entry.NodeID = _currentID++;
+                    ImportFolder((DirEntry)entry, rootFolder, path);
                 }
                 else
                 {                    
-                    string absolutePath = Path.Combine(folder, relativePath);
-                    string volumePath = absolutePath.Substring(InputFolder.Length + 1);
-
                     var fInfo = new FileInfo(absolutePath);
-                    if (Compress && IsNormallyCompressedVolumeFile(volumePath))
+                    if (Compress && IsNormallyCompressedVolumeFile(entryVolumePath))
                     {
                         entry = new CompressedFileEntry(relativePath);
                         ((CompressedFileEntry)entry).Size = (int)fInfo.Length;
@@ -523,11 +808,15 @@ namespace GT4FS.Core.Packing
                         ((FileEntry)entry).Size = (int)fInfo.Length;
                         ((FileEntry)entry).ModifiedDate = fInfo.LastWriteTimeUtc;
                     }
-                    entry.NodeID = CurrentID++;
+
+                    entry.AbsolutePath = absolutePath;
+                    entry.VolumePath = entryVolumePath;
+
+                    entry.NodeID = _currentID++;
                 }
 
                 entry.ParentNode = parent.NodeID;
-                parent.ChildEntries.Add(entry);
+                parent.ChildEntries.Add(entry.Name, entry);
             }
         }
 
@@ -570,15 +859,15 @@ namespace GT4FS.Core.Packing
         /// Builds the 2D representation of the file system, for packing.
         /// </summary>
         /// <param name="parentDir"></param>
-        private void TraverseBuildEntryPackList(DirEntry parentDir)
+        private void TraverseBuildFileEntryList(List<Entry> entries, DirEntry parentDir)
         {
             foreach (var entry in parentDir.ChildEntries)
-                _entries.Add(entry);
+                entries.Add(entry.Value);
 
             foreach (var entry in parentDir.ChildEntries)
             {
-                if (entry is DirEntry childDir)
-                    TraverseBuildEntryPackList(childDir);
+                if (entry.Value is DirEntry childDir)
+                    TraverseBuildFileEntryList(entries, childDir);
             }
         }
 
@@ -586,15 +875,15 @@ namespace GT4FS.Core.Packing
         {
             return game switch
             {
-                GameVolumeType.GTHD => 0x1 * Volume.DefaultBlockSize,
+                GameVolumeType.GTHD => 0x1 * Volume.DefaultPageSize,
 
                 // From this point on, 17mb+ of wasted space..
-                GameVolumeType.TT => 0x2231 * Volume.DefaultBlockSize,
-                GameVolumeType.TT_DEMO => 0x2159 * Volume.DefaultBlockSize,
-                GameVolumeType.GT4 => 0x2159 * Volume.DefaultBlockSize,
-                GameVolumeType.GT4_MX5_DEMO => 0x2159 * Volume.DefaultBlockSize,
-                GameVolumeType.GT4_FIRST_PREV => 0x2159 * Volume.DefaultBlockSize,
-                GameVolumeType.GT4_ONLINE => 0x22B7 * Volume.DefaultBlockSize,
+                GameVolumeType.TT => 0x2231 * Volume.DefaultPageSize,
+                GameVolumeType.TT_DEMO => 0x2159 * Volume.DefaultPageSize,
+                GameVolumeType.GT4 => 0x2159 * Volume.DefaultPageSize,
+                GameVolumeType.GT4_MX5_DEMO => 0x2159 * Volume.DefaultPageSize,
+                GameVolumeType.GT4_FIRST_PREV => 0x2159 * Volume.DefaultPageSize,
+                GameVolumeType.GT4_ONLINE => 0x22B7 * Volume.DefaultPageSize,
                 _ => 0x800,
             };
         }
