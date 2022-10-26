@@ -68,17 +68,21 @@ namespace GT4FS.Tester
             [Option('d', "decrypted", HelpText = "Build the volume without header encryption. Default is encrypted.")]
             public bool Decrypted { get; set; }
 
-            [Option("no-compress", HelpText = "Build the volume without encryption. (Speeds up packing but overall volume size is greatly increased!)")]
+            [Option("no-compress", HelpText = "Build the volume without compression. (Speeds up packing but overall volume size is greatly increased!)")]
             public bool NoCompress { get; set; }
+
+            [Option("no-merge", HelpText = "Build the volume and avoids merging data and ToC together. Optional - speeds up building by skipping merge part. Do not use Apache3 for this (broken).")]
+            public bool NoMerge { get; set; }
         }
 
-        [Verb("pack-append", HelpText = "Same as packing, but will dangerously append to the existing VOL. Makes vol edits almost instant, but MAKE BACKUPS OF YOUR ORIGINAL VOL!")]
+        [Verb("pack-append", HelpText = "Same as 'pack', but will append to the existing VOL instead. Makes VOL edits almost instant, but MAKE A BACKUP OF YOUR ORIGINAL VOL! " +
+            "Do not use Apache3 for this (broken). You can keep appending files to the VOL afterwards.")]
         class PackAppendOptions
         {
-            [Option('r', "read", Required = true, HelpText = "Input file to be processed (GT.VOL file).")]
+            [Option('r', "read", Required = true, HelpText = "Input file to be processed (GT.VOL file). Warning: It will be edited.")]
             public string Input { get; set; }
 
-            [Option('a', "append", Required = true, HelpText = "Folder with game contents to append to the VOL file. ONLY edited/added files goes there. " +
+            [Option('a', "append", Required = true, HelpText = "Folder with game contents to append to the VOL file. ONLY edited/added files from the game goes there, not the whole folder. " +
                 "Must match game directory structure to replace files.")]
             public string AppendFolder { get; set; }
         }
@@ -195,6 +199,7 @@ namespace GT4FS.Tester
 
             fsBuilder.SetCompressed(!options.NoCompress);
             fsBuilder.SetEncrypted(!options.Decrypted);
+            fsBuilder.SetNoMergeTocMode(options.NoMerge);
             fsBuilder.RegisterFilesToPack(options.Input);
             fsBuilder.Build(options.Output, tocOffset);
         }
@@ -209,9 +214,7 @@ namespace GT4FS.Tester
             fsBuilder.RegisterFilesFromBTree(btree, options.AppendFolder);
             btree.Dispose();
 
-            fsBuilder.AppendToVolumeMode = true;
-            fsBuilder.BaseDataOffset = btree.GetBaseDataOffset();
-            fsBuilder.NoMergeTocMode = true;
+            fsBuilder.SetAppendMode(true, btree.GetBaseDataOffset());
             fsBuilder.Build(options.Input, (uint)btree.GetRealToCOffset());
         }
 

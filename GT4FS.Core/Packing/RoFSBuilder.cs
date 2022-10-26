@@ -23,20 +23,8 @@ namespace GT4FS.Core.Packing
     /// </summary>
     public class RoFSBuilder
     {
-        /// <summary>
-        /// Whether or not to encrypt the volume header & toc. This is supported by the game.
-        /// </summary>
-        public bool Encrypt { get; set; } = true;
 
-        /// <summary>
-        /// Whether or not to allow compressing files.
-        /// </summary>
-        public bool Compress { get; set; } = true;
 
-        public const int PageHeaderSize = 0x0C;
-
-        public string InputFolder { get; set; }
-        public uint BaseRealTocOffset { get; set; }
 
         public const int ArbitraryLengthForToCToAvoidMerge = 0x2000000;
 
@@ -48,7 +36,7 @@ namespace GT4FS.Core.Packing
         /// <summary>
         /// The root of the folder structure - used to build the relationship between files.
         /// </summary>
-        public DirEntry RootTree { get; set; }
+        private DirEntry _rootTree { get; set; }
 
         // In-one-go entries of the whole file system for writing later on.
         private List<Entry> _entriesToPack = new List<Entry>();
@@ -70,21 +58,59 @@ namespace GT4FS.Core.Packing
         private int _baseDataOffset;
 
         /// <summary>
+        /// Current node ID.
+        /// </summary>
+        private int _currentID = 1;
+
+        public const int PageHeaderSize = 0x0C;
+
+        public string InputFolder { get; set; }
+        public uint BaseRealTocOffset { get; private set; }
+
+        /// <summary>
         /// Whether to avoid merging the ToC and the volume contents by arbitrarily setting a very large toc page size to fit the toc.
         /// </summary>
-        public bool NoMergeTocMode { get; set; }
+        public bool NoMergeTocMode { get; private set; }
 
-        public bool AppendToVolumeMode { get; set; }
+        public bool AppendToVolumeMode { get; private set; }
 
         /// <summary>
         /// For append mode
         /// </summary>
-        public long BaseDataOffset { get; set; }
+        public long BaseDataOffset { get; private set; }
 
         /// <summary>
-        /// Current node ID.
+        /// Whether or not to encrypt the volume header & toc. This is supported by the game.
         /// </summary>
-        public int CurrentID = 1;
+        public bool Encrypt { get; private set; } = true;
+
+        /// <summary>
+        /// Whether or not to allow compressing files.
+        /// </summary>
+        public bool Compress { get; private set; } = true;
+
+
+
+        public void SetEncrypted(bool encrypted)
+           => Encrypt = encrypted;
+
+        public void SetAppendMode(bool appendMode, long baseDataOffset = -1)
+        {
+            AppendToVolumeMode = appendMode;
+            NoMergeTocMode = appendMode;
+            BaseDataOffset = baseDataOffset;
+        }
+   
+        public void SetNoMergeTocMode(bool noMerge)
+        {
+            NoMergeTocMode = noMerge;
+        }
+
+        public void SetCompressed(bool compress)
+           => Compress = compress;
+
+        public void SetPageSize(ushort pageSize)
+            => PageSize = pageSize;
 
         /// <summary>
         /// Registers all the files to pack in volume scratch building mode.
@@ -95,13 +121,13 @@ namespace GT4FS.Core.Packing
             Console.WriteLine($"Indexing '{Path.GetFullPath(inputFolder)}' to find files to pack.. ");
             InputFolder = Path.GetFullPath(inputFolder);
 
-            RootTree = new DirEntry(".");
-            RootTree.NodeID = CurrentID++;
+            _rootTree = new DirEntry(".");
+            _rootTree.NodeID = _currentID++;
 
-            _entriesToPack.Add(RootTree);
+            _entriesToPack.Add(_rootTree);
 
-            ImportFolder(RootTree, InputFolder, InputFolder);
-            TraverseBuildFileEntryList(_entriesToPack, RootTree);
+            ImportFolder(_rootTree, InputFolder, InputFolder);
+            TraverseBuildFileEntryList(_entriesToPack, _rootTree);
 
             Console.WriteLine($"Found {_entriesToPack.Count(e => e.EntryType != VolumeEntryType.Directory)} files to pack.");
         }
@@ -114,11 +140,11 @@ namespace GT4FS.Core.Packing
         public void RegisterFilesFromBTree(BTree originalBTree, string appendFilesPath)
         {
             var tocNodes = originalBTree.GetNodes().ToList();
-            RootTree = tocNodes[0] as DirEntry;
+            _rootTree = tocNodes[0] as DirEntry;
 
             // Build file tree of our mod path
             var appendModTree = new DirEntry(".");
-            appendModTree.NodeID = CurrentID++;
+            appendModTree.NodeID = _currentID++;
 
             var flattenedTree = new List<Entry>();
             flattenedTree.Add(appendModTree);
@@ -126,15 +152,15 @@ namespace GT4FS.Core.Packing
             TraverseBuildFileEntryList(flattenedTree, appendModTree);
 
             // Merge the trees
-            MergeDirEntries(RootTree, appendModTree, "");
+            MergeDirEntries(_rootTree, appendModTree, "");
 
             // Reassign IDs for the combined tree
-            CurrentID = 1;
-            RelinkDirIDs(RootTree);
+            _currentID = 1;
+            RelinkDirIDs(_rootTree);
 
             // Build the final flattened list
-            _entriesToPack.Add(RootTree);
-            TraverseBuildFileEntryList(_entriesToPack, RootTree);
+            _entriesToPack.Add(_rootTree);
+            TraverseBuildFileEntryList(_entriesToPack, _rootTree);
         }
 
         /// <summary>
@@ -182,12 +208,12 @@ namespace GT4FS.Core.Packing
             {
                 if (entry.Value.EntryType == VolumeEntryType.Directory)
                 {
-                    entry.Value.NodeID = ++CurrentID;
+                    entry.Value.NodeID = ++_currentID;
                     RelinkDirIDs((DirEntry)entry.Value);
                 }
                 else
                 {
-                    entry.Value.NodeID = ++CurrentID;
+                    entry.Value.NodeID = ++_currentID;
                 }
 
                 entry.Value.ParentNode = parentEntry.NodeID;
@@ -221,7 +247,11 @@ namespace GT4FS.Core.Packing
 
             BuildVolumeToCAndContents(volStream);
 
-            Console.WriteLine($"Done, folder packed to {Path.GetFullPath(outputFile)}.");
+            if (!AppendToVolumeMode)
+                Console.WriteLine("Done. Files appended to existing volume and ToC rewritten.");
+            else
+                Console.WriteLine($"Done, folder packed to {Path.GetFullPath(outputFile)}.");
+
             volStream.Dispose();
         }
 
@@ -234,14 +264,6 @@ namespace GT4FS.Core.Packing
             volStream.WriteInt16(2); // Version Major
         }
 
-        public void SetEncrypted(bool encrypted)
-           => Encrypt = encrypted;
-
-        public void SetCompressed(bool compress)
-           => Compress = compress;
-
-        public void SetPageSize(ushort pageSize)
-            => PageSize = pageSize;
 
         /// <summary>
         /// Builds the real table of contents and links the data with it.
@@ -260,6 +282,8 @@ namespace GT4FS.Core.Packing
             {
                 if (!AppendToVolumeMode)
                 {
+                    Console.WriteLine("Writing files into new volume.");
+
                     // Start writing the files to our new scratch VOL to a seperate file that will be merged to the toc later on.
                     WriteVolumeContents(volStream);
                 }
@@ -331,7 +355,7 @@ namespace GT4FS.Core.Packing
                 int filePageOffset;
                 if (_baseDataOffset + fileOffset < ArbitraryLengthForToCToAvoidMerge)
                 {
-                    Console.WriteLine($"Physically moving '{entry.Name}' to end of volume to avoid overlapping");
+                    Console.WriteLine($"Moving '{entry.Name}' to end of volume to avoid overlapping with new ToC.");
 
                     // This file is behind the pre-allocated space required for the toc, move it to end of volume
                     volStream.BaseStream.Position = BaseDataOffset + fileOffset;
@@ -359,6 +383,7 @@ namespace GT4FS.Core.Packing
 
         private void WriteAppendingFiles(BinaryStream bs)
         {
+            Console.WriteLine("Appending files to volume.");
             bs.Position = bs.Length;
             foreach (var entry in _entriesToPack)
             {
@@ -456,6 +481,8 @@ namespace GT4FS.Core.Packing
             BinaryStream bs;
             if (!NoMergeTocMode)
             {
+                Console.WriteLine("Writing temporary contents file to merge with ToC later.");
+
                 // Traditional, accurate RoFS building where the data is immediately after the ToC.
                 // Therefore, it needs to be merged.
                 var fs = new FileStream("gtfiles.temp", FileMode.Create);
@@ -463,6 +490,8 @@ namespace GT4FS.Core.Packing
             }
             else
             {
+                Console.WriteLine("Not merging ToC and data (merge mode enabled)");
+
                 // "Hack" where we set the ToC pretty far so that we don't have to merge the ToC and data
                 bs = volStream;
                 volStream.BaseStream.Position = ArbitraryLengthForToCToAvoidMerge;
@@ -471,10 +500,10 @@ namespace GT4FS.Core.Packing
             int i = 1;
             int count = _entriesToPack.Count(c => c.EntryType != VolumeEntryType.Directory);
 
-            WriteDirectory(bs, RootTree, "", volStream.BaseStream.Position, ref i, ref count);
+            WriteDirectory(bs, _rootTree, "", volStream.BaseStream.Position, ref i, ref count);
 
             if (!NoMergeTocMode)
-                bs.Dispose();
+                bs.Dispose(); // Clean up temp file
         }
 
         private void WriteDirectory(BinaryStream fileWriter, DirEntry parentDir, string path, long baseDataPos, ref int currentIndex, ref int count)
@@ -761,7 +790,7 @@ namespace GT4FS.Core.Packing
                 if (File.GetAttributes(path).HasFlag(FileAttributes.Directory))
                 {
                     entry = new DirEntry(relativePath);
-                    entry.NodeID = CurrentID++;
+                    entry.NodeID = _currentID++;
                     ImportFolder((DirEntry)entry, rootFolder, path);
                 }
                 else
@@ -783,7 +812,7 @@ namespace GT4FS.Core.Packing
                     entry.AbsolutePath = absolutePath;
                     entry.VolumePath = entryVolumePath;
 
-                    entry.NodeID = CurrentID++;
+                    entry.NodeID = _currentID++;
                 }
 
                 entry.ParentNode = parent.NodeID;
