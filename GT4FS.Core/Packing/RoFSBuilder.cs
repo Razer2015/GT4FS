@@ -385,7 +385,6 @@ namespace GT4FS.Core.Packing
 
         private void WriteAppendingFiles(BinaryStream bs)
         {
-            Console.WriteLine("Appending files to volume.");
             bs.Position = bs.Length;
             foreach (var entry in _entriesToPack)
             {
