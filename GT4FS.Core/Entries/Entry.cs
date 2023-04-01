@@ -9,7 +9,7 @@ using GT4FS.Core;
 
 namespace GT4FS.Core.Entries
 {
-    [DebuggerDisplay("{Name}")]
+    [DebuggerDisplay("Entry: {Name}")]
     public abstract class Entry
     {
         /// <summary>

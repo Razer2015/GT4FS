@@ -1,11 +1,13 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Text;
 
 using Syroot.BinaryData.Memory;
 
 namespace GT4FS.Core.Entries
 {
+    [DebuggerDisplay("FileEntry: {Name}")]
     public class FileEntry : Entry
     {
         public int Size { get; set; }

@@ -193,7 +193,15 @@ namespace GT4FS.Core.Packing
                     // New file or directory
                     // Children will be automatically re-ordered by the sorted dictionary
                     if (entryToAppend.Value is not DirEntry)
+                    {
                         entryToAppend.Value.IsModFileAppendToVolumeEnd = true;
+                    }
+                    else
+                    {
+                        tocEntry = new DirEntry();
+                        tocEntry.Name = entryToAppend.Value.Name;
+                        MergeDirEntries(tocEntry as DirEntry, entryToAppend.Value as DirEntry, volPath + tocEntry.Name + "/");
+                    }
 
                     parentTocEntry.ChildEntries.Add(entryToAppend.Key, entryToAppend.Value);
                 }

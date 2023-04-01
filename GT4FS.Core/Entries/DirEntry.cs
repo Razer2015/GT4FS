@@ -1,11 +1,13 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Text;
 
 using Syroot.BinaryData.Memory;
 
 namespace GT4FS.Core.Entries
 {
+    [DebuggerDisplay("DirEntry: {Name}")]
     public class DirEntry : Entry
     {
         public SortedDictionary<string, Entry> ChildEntries { get; set; } = new(StringComparer.Ordinal);

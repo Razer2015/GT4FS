@@ -1,11 +1,13 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Text;
 
 using Syroot.BinaryData.Memory;
 
 namespace GT4FS.Core.Entries
 {
+    [DebuggerDisplay("CompressedFileEntry: {Name}")]
     public class CompressedFileEntry : Entry
     {
         public int CompressedSize { get; set; }
