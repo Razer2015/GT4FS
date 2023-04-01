@@ -3,7 +3,7 @@
 		<OutputType>Exe</OutputType>
 		<TargetFramework>net6.0</TargetFramework>
 		<AssemblyName>GT4FS</AssemblyName>
-		<Version>3.2.1</Version>
+		<Version>3.2.2</Version>
 		<Authors>team eventHorizon</Authors>
 	</PropertyGroup>
 

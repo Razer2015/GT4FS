@@ -275,7 +275,7 @@ New Release-Platform.
 New Tools.
 
 
-GT4FS Extractor/Packer 3.2.1, by team eventHorizon";
+GT4FS Extractor/Packer 3.2.2, by team eventHorizon";
 
             Console.WriteLine(coolstory);
             Console.Write("\nDo you agree? (y/n): ");
