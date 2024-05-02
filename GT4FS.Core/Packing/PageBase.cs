@@ -11,58 +11,57 @@ using Syroot.BinaryData.Memory;
 
 using GT4FS.Core.Entries;
 
-namespace GT4FS.Core.Packing
+namespace GT4FS.Core.Packing;
+
+/// <summary>
+/// Represents a table of content page. This class is abstract.
+/// </summary>
+public abstract class PageBase
 {
     /// <summary>
-    /// Represents a table of content page. This class is abstract.
+    /// Type of page.
     /// </summary>
-    public abstract class PageBase
+    public abstract PageType Type { get; }
+
+    public int LastPosition { get; set; }
+
+    /// <summary>
+    /// Buffer for the page.
+    /// </summary>
+    public byte[] Buffer { get; set; }
+
+    /// <summary>
+    /// Page size.
+    /// </summary>
+    public int PageSize { get; set; }
+
+    public int PageIndex { get; set; }
+
+    public PageBase PreviousPage { get; set; }
+    public PageBase NextPage { get; set; }
+
+    public int EntryCount { get; set; }
+    protected int _spaceLeft;
+
+    public abstract void FinalizeHeader();
+
+    public void WriteNextPage(int next)
+        => BinaryPrimitives.WriteInt32LittleEndian(Buffer.AsSpan()[4..], next);
+
+    public void WritePreviousPage(int previous)
+        => BinaryPrimitives.WriteInt32LittleEndian(Buffer.AsSpan()[8..], previous);
+
+
+    public enum PageType : ushort
     {
         /// <summary>
-        /// Type of page.
+        /// Stores information about the file entries.
         /// </summary>
-        public abstract PageType Type { get; }
-
-        public int LastPosition { get; set; }
+        PT_RECORD,
 
         /// <summary>
-        /// Buffer for the page.
+        /// Stores page indexing information, to then point to entry pages.
         /// </summary>
-        public byte[] Buffer { get; set; }
-
-        /// <summary>
-        /// Page size.
-        /// </summary>
-        public int PageSize { get; set; }
-
-        public int PageIndex { get; set; }
-
-        public PageBase PreviousPage { get; set; }
-        public PageBase NextPage { get; set; }
-
-        public int EntryCount { get; set; }
-        protected int _spaceLeft;
-
-        public abstract void FinalizeHeader();
-
-        public void WriteNextPage(int next)
-            => BinaryPrimitives.WriteInt32LittleEndian(Buffer.AsSpan()[4..], next);
-
-        public void WritePreviousPage(int previous)
-            => BinaryPrimitives.WriteInt32LittleEndian(Buffer.AsSpan()[8..], previous);
-
-
-        public enum PageType : ushort
-        {
-            /// <summary>
-            /// Stores information about the file entries.
-            /// </summary>
-            Entry,
-
-            /// <summary>
-            /// Stores page indexing information, to then point to entry pages.
-            /// </summary>
-            Index,
-        }
+        PT_INDEX,
     }
 }
