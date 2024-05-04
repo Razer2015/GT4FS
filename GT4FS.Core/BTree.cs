@@ -20,7 +20,7 @@ public class BTree : IDisposable
     private readonly Volume _volume;
     private readonly QueueWriter _queueWriter;
     public List<ToCPage> Pages { get; set; }
-    private IEnumerable<Entry> _nodeEntries;
+    private List<Entry> _nodeEntries;
 
     public BTree(Volume volume, ILogWriter logWriter = null)
     {
@@ -91,14 +91,14 @@ public class BTree : IDisposable
 
             sw.WriteLine(".");
             var folders = new List<string>();
-            TraverseNodes(_nodeEntries.ToList(), sw, 1, 1, folders, debugInfo);
+            TraverseNodes(_nodeEntries, sw, 1, 1, folders, debugInfo);
         }
         Console.WriteLine($"File list written to {path}");
 
         return true;
     }
 
-    private void TraverseNodes(IList<Entry> nodeEntries, StreamWriter sw, uint parentNodeID, int depth, List<string> prefixFolders, bool debugInfo)
+    private void TraverseNodes(List<Entry> nodeEntries, StreamWriter sw, uint parentNodeID, int depth, List<string> prefixFolders, bool debugInfo)
     {
         var nodes = nodeEntries.Where(x => x.ParentNode == parentNodeID);
         for (int i = 0; i < nodes.Count(); i++)
@@ -151,10 +151,12 @@ public class BTree : IDisposable
             Pages.Add(new ToCPage(buffer));
         }
 
-        _nodeEntries = Pages.Where(x => x.Flag == 0).SelectMany(x => x.NodeEntries);
+        _nodeEntries = Pages.Where(x => x.Flag == 0)
+            .SelectMany(x => x.NodeEntries)
+            .ToList();
     }
 
-    public IEnumerable<Entry> GetNodes()
+    public List<Entry> GetNodes()
     {
         if (_nodeEntries == null)
             Read();
@@ -186,12 +188,26 @@ public class BTree : IDisposable
             Read();
 
         var files = new List<(string Path, long Offset, uint PackedSize, uint RealSize, DateTime ModifiedDate)>();
-        foreach (var nodeEntry in _nodeEntries.Where(x => x.EntryType != VolumeEntryType.Directory))
+        foreach (Entry nodeEntry in _nodeEntries)
         {
-            if (nodeEntry is FileEntry file)
-                files.Add((BuildPath(nodeEntry), _volume.GetFileOffset((uint)file.PageOffset), (uint)file.Size, (uint)file.Size, file.ModifiedDate));
-            else if (nodeEntry is CompressedFileEntry cFile)
-                files.Add((BuildPath(nodeEntry), _volume.GetFileOffset((uint)cFile.PageOffset), (uint)cFile.CompressedSize, (uint)cFile.Size, cFile.ModifiedDate));
+            if (nodeEntry.EntryType == VolumeEntryType.Directory)
+                continue;
+
+            try
+            {
+                if (nodeEntry is FileEntry file)
+                {
+                    files.Add((BuildPath(file), _volume.GetFileOffset((uint)file.PageOffset), (uint)file.Size, (uint)file.Size, file.ModifiedDate));
+                }
+                else if (nodeEntry is CompressedFileEntry cFile)
+                {
+                    files.Add((BuildPath(cFile), _volume.GetFileOffset((uint)cFile.PageOffset), (uint)cFile.CompressedSize, (uint)cFile.Size, cFile.ModifiedDate));
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"ERROR: Skipping node {nodeEntry.NodeID} (parent: {nodeEntry.ParentNode}) - {ex.Message}");
+            }
         }
 
         return files;
@@ -199,7 +215,15 @@ public class BTree : IDisposable
 
     private string BuildPath(Entry nodeEntry)
     {
-        return nodeEntry.ParentNode == 0 ? string.Empty : Path.Combine(BuildPath(_nodeEntries.FirstOrDefault(x => x.NodeID == nodeEntry.ParentNode)), nodeEntry.Name);
+        if (nodeEntry.ParentNode == 0)
+            return string.Empty;
+
+        Entry parentNode = _nodeEntries.Find(x => x.NodeID == nodeEntry.ParentNode);
+        if (parentNode is null)
+            ArgumentNullException.ThrowIfNull(parentNode);
+
+        string parentPath = BuildPath(parentNode);
+        return Path.Combine(parentPath, nodeEntry.Name);
     }
 
     private bool ExtractFile(BinaryStream reader, long offset, uint packedSize, uint realSize, DateTime modifiedDate, string destPath, out string sourcePath, bool overWrite)
