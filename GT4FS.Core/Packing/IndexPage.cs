@@ -10,6 +10,7 @@ using Syroot.BinaryData;
 using Syroot.BinaryData.Memory;
 
 using GT4FS.Core.Entries;
+using System.Diagnostics;
 
 namespace GT4FS.Core.Packing;
 
@@ -23,9 +24,6 @@ public class IndexPage : PageBase
 {
     public override PageType Type => PageType.PT_INDEX;
 
-    public const int HeaderSize = 0x0C;
-    public const int TocEntrySize = 0x08;
-
     /// <summary>
     /// The previous entry between two entry pages.
     /// </summary>
@@ -36,79 +34,63 @@ public class IndexPage : PageBase
     /// </summary>
     public Entry NextPageFirstEntry { get; set; }
 
-    public bool IsMasterPage { get; set; }
+    public PageBase LastPage { get; set; }
 
-    public IndexPage(int pageSize)
+    public IndexPage(ushort pageSize)
+        : base(pageSize) { }
+
+    public bool TryAddEntry(Entry lastPrevPageEntry, Entry firstNextPageEntry, PageBase targetPage)
     {
-        PageSize = pageSize;
-        Buffer = new byte[PageSize];
-        _spaceLeft = pageSize - HeaderSize - TocEntrySize; // Account for the last page entry "terminator" behind the bottom ToC
+        (byte[] indexer, int parentNode, string name) = CompareEntries(lastPrevPageEntry, firstNextPageEntry);
+        int entryOffset = PAGE_HEADER_SIZE + EntriesInfoSize;
+        int newEntryInfoSize = MeasureEntrySize(entryOffset, indexer);
+        int currentSpaceTaken = PAGE_HEADER_SIZE +
+            EntriesInfoSize + // Entries info
+            (4 + (Entries.Count * PAGE_TOC_ENTRY_SIZE)); // Bottom toc
 
-        LastPosition = HeaderSize;
+        if (currentSpaceTaken + (newEntryInfoSize + PageBase.PAGE_TOC_ENTRY_SIZE) > PageSize)
+            return false;
+
+        Entries.Add(new IndexEntry() 
+        { 
+            Indexer = indexer,
+            ParentNode = parentNode,
+            Name = name,
+            SubPageRef = targetPage 
+        });
+
+        EntriesInfoSize += newEntryInfoSize;
+        return true;
     }
 
-    /// <summary>
-    /// Compares two entries and determines whether they can be writen into the page.
-    /// </summary>
-    /// <param name="lastPrevPageEntry"></param>
-    /// <param name="firstNextPageEntry"></param>
-    /// <returns></returns>
-    public bool HasSpaceToWriteEntry(Entry lastPrevPageEntry, Entry firstNextPageEntry)
+    public override void Serialize(ref SpanWriter writer)
     {
-        byte[] indexer = CompareEntries(lastPrevPageEntry, firstNextPageEntry);
-        int entrySize = MeasureEntrySize(LastPosition, indexer);
+        long basePageOffset = writer.Position;
+        writer.WriteUInt16(1); // IsIndexingBlock
+        writer.WriteUInt16((ushort)((Entries.Count * 2) + 1));
+        writer.WriteInt32(NextPage?.PageIndex ?? -1);
+        writer.WriteInt32(PreviousPage?.PageIndex ?? -1);
 
-        return entrySize + TocEntrySize <= _spaceLeft;
-    }
+        int lastEntryOffset = writer.Position;
+        for (int i = 0; i < Entries.Count; i++)
+        {
+            IndexEntry indexEntry = (IndexEntry)Entries[i];
 
-    public void WriteNextDataEntry(Entry lastPrevPageEntry, Entry firstNextPageEntry)
-    {
-        var pageWriter = new SpanWriter(Buffer);
-        pageWriter.Position = LastPosition;
+            writer.Position = lastEntryOffset;
+            long entryOffset = lastEntryOffset;
+            writer.WriteBytes(indexEntry.Indexer);
+            writer.Align(0x04);
+            lastEntryOffset = writer.Position;
 
-        byte[] indexer = CompareEntries(lastPrevPageEntry, firstNextPageEntry);
+            // Reverse order
+            writer.Position = (int)((basePageOffset + PageSize) - ((i + 1) * PAGE_TOC_ENTRY_SIZE));
+            writer.WriteUInt16((ushort)(entryOffset - basePageOffset));
+            writer.WriteUInt16((ushort)indexEntry.Indexer.Length);
+            writer.WriteInt32(indexEntry.SubPageRef.PageIndex);
+        }
 
-        int actualSpace = MeasureEntrySize(pageWriter.Position, indexer);
-        int entrySize = indexer.Length;
-
-        if (actualSpace > _spaceLeft)
-            throw new Exception("Not enough space to write index entry.");
-
-        // Begin to write the entry's common information
-        int entryOffset = pageWriter.Position;
-        pageWriter.WriteBytes(indexer);
-        pageWriter.Align(0x04); // Entry is aligned
-
-        int endPos = pageWriter.Position;
-
-        _spaceLeft -= actualSpace + TocEntrySize; // Include the page's toc entry
-
-        // Write the lookup information at the end of the page
-        pageWriter.Position = PageSize - ((EntryCount + 1) * TocEntrySize);
-        pageWriter.WriteUInt16((ushort)entryOffset);
-        pageWriter.WriteUInt16((ushort)entrySize);
-        pageWriter.WriteUInt32(0); // We will write the page index later as we don't have it
-
-        // Move on to next.
-        EntryCount++;
-
-        LastPosition = endPos;
-    }
-
-    /// <summary>
-    /// Fills up the page's type, and entry count.
-    /// </summary>
-    public override void FinalizeHeader()
-    {
-        var pageWriter = new SpanWriter(Buffer);
-        pageWriter.Position = LastPosition;
-
-        // Write up the page info - write what we can write - the entry count
-        pageWriter.Position = 0;
-        pageWriter.WriteUInt16((ushort)Type);
-        pageWriter.WriteUInt16((ushort)((EntryCount * 2) + 1));
-
-        // Entry terminator will be written later on
+        writer.Position = (int)((basePageOffset + PageSize) - (Entries.Count * PAGE_TOC_ENTRY_SIZE)) - 4;
+        writer.WriteInt32(LastPage.PageIndex); // IndexEnd
     }
 
     /// <summary>
@@ -117,11 +99,10 @@ public class IndexPage : PageBase
     /// <param name="baseOffset"></param>
     /// <param name="name"></param>
     /// <returns></returns>
-    private ushort MeasureEntrySize(int baseOffset, byte[] indexer)
+    private static ushort MeasureEntrySize(int baseOffset, byte[] indexer)
     {
         int newOffset = baseOffset;
         newOffset += indexer.Length;
-
         newOffset += Utils.Align(newOffset, 0x04) - newOffset;
         return (ushort)(newOffset - baseOffset);
     }
@@ -132,7 +113,7 @@ public class IndexPage : PageBase
     /// <param name="prevLastPageEntry"></param>
     /// <param name="nextFirstPageEntry"></param>
     /// <returns></returns>
-    public byte[] CompareEntries(Entry prevLastPageEntry, Entry nextFirstPageEntry)
+    public (byte[] Indexer, int ParentNode, string Name) CompareEntries(Entry prevLastPageEntry, Entry nextFirstPageEntry)
     {
         // The entry is the combination of the parent node, and the entry name.
         // We are writing the first difference, including in the parent node's int.
@@ -152,7 +133,7 @@ public class IndexPage : PageBase
             for (int i = 0; i < 4; i++)
             {
                 if (prevNodeID[i] != nextNodeID[i])
-                    return nextNodeID.Slice(0, i + 1).ToArray();
+                    return (nextNodeID.Slice(0, i + 1).ToArray(), nextFirstPageEntry.ParentNode, nextFirstPageEntry.Name);
             }
         }
 
@@ -170,11 +151,11 @@ public class IndexPage : PageBase
                 byte[] difference = new byte[4 + (i + 1)];
                 BinaryPrimitives.WriteInt32BigEndian(difference, nextFirstPageEntry.ParentNode);
                 Encoding.UTF8.GetBytes(firstNextName.AsSpan(0, i + 1), difference.AsSpan(4));
-                return difference;
+                return (difference, nextFirstPageEntry.ParentNode, firstNextName.Substring(0, i + 1));
             }
         }
 
         // This is unpossible, or else both entries are the same file due to being the same parent
-        throw new ArgumentException($"First entry is equal to the second entry. ({lastName}, parent ID {prevLastPageEntry.ParentNode})");
+        throw new UnreachableException($"First entry is equal to the second entry. ({lastName}, parent ID {prevLastPageEntry.ParentNode})");
     }
 }

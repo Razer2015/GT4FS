@@ -46,11 +46,11 @@ namespace GT.Shared.Helpers
             BinaryPrimitives.WriteUInt32BigEndian(header, 0xC5EEF7FFu);
             BinaryPrimitives.WriteInt32LittleEndian(header[4..], -(int)input.Length);
 
-            
             output.Write(header);
             
             input.Position = 0;
             var inputBytes = ArrayPool<byte>.Shared.Rent((int)input.Length);
+            var outputBytes = ArrayPool<byte>.Shared.Rent((int)input.Length * 2);
             using var ms = new MemoryStream(inputBytes);
             input.CopyTo(ms);
             ms.Position = 0;
@@ -64,12 +64,13 @@ namespace GT.Shared.Helpers
             d.SetInput(inputBytes, 0, (int)input.Length);
             d.Finish();
 
-            int count = d.Deflate(inputBytes);
-            output.Write(inputBytes, 0, count);
+            int outputCount = d.Deflate(outputBytes);
+            output.Write(outputBytes, 0, outputCount);
 
             ArrayPool<byte>.Shared.Return(inputBytes);
+            ArrayPool<byte>.Shared.Return(outputBytes);
 
-            return output.Position - basePos; // output.Position - basePos;
+            return output.Position - basePos;
         }
     }
 }

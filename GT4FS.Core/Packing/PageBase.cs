@@ -18,39 +18,29 @@ namespace GT4FS.Core.Packing;
 /// </summary>
 public abstract class PageBase
 {
+    public const int PAGE_HEADER_SIZE = 0x0C;
+    public const int PAGE_TOC_ENTRY_SIZE = 0x08;
+
     /// <summary>
     /// Type of page.
     /// </summary>
     public abstract PageType Type { get; }
 
-    public int LastPosition { get; set; }
-
-    /// <summary>
-    /// Buffer for the page.
-    /// </summary>
-    public byte[] Buffer { get; set; }
-
-    /// <summary>
-    /// Page size.
-    /// </summary>
-    public int PageSize { get; set; }
-
     public int PageIndex { get; set; }
-
     public PageBase PreviousPage { get; set; }
     public PageBase NextPage { get; set; }
 
-    public int EntryCount { get; set; }
-    protected int _spaceLeft;
+    public int EntriesInfoSize { get; set; }
+    public List<Entry> Entries { get; set; } = [];
 
-    public abstract void FinalizeHeader();
+    public ushort PageSize { get; }
 
-    public void WriteNextPage(int next)
-        => BinaryPrimitives.WriteInt32LittleEndian(Buffer.AsSpan()[4..], next);
+    public PageBase(ushort pageSize)
+    {
+        PageSize = pageSize;
+    }
 
-    public void WritePreviousPage(int previous)
-        => BinaryPrimitives.WriteInt32LittleEndian(Buffer.AsSpan()[8..], previous);
-
+    public abstract void Serialize(ref SpanWriter writer);
 
     public enum PageType : ushort
     {

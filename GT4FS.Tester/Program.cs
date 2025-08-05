@@ -65,8 +65,8 @@ namespace GT4FS.Tester
             [Option('b', "page-size", HelpText = "Advanced Users. Sets the file system's page size. Default is 0x800/2048.")]
             public ushort PageSize { get; set; } */
 
-            [Option('d', "decrypted", HelpText = "Build the volume without header encryption. Default is encrypted.")]
-            public bool Decrypted { get; set; }
+            [Option('d', "decrypted", HelpText = "Build the volume without header encryption. Default is decrypted (game's default is encrypted).")]
+            public bool Decrypted { get; set; } = true;
 
             [Option("no-compress", HelpText = "Build the volume without compression. (Speeds up packing but overall volume size is greatly increased!)")]
             public bool NoCompress { get; set; }
@@ -89,6 +89,11 @@ namespace GT4FS.Tester
 
         static void Main(string[] args)
         {
+            // Uncomment for debug reading
+            // Check debug logs tab in VS.
+            // var reader = DebugReader.FromVolume(@"GTNew.VOL", (int)RoFSBuilder.GetRealToCOffsetForGame(GameVolumeType.GT4_ONLINE) * 0x800);
+            // var ent = reader.TraversePathFindEntry(1, "dnas/auth_dna_beta.dat");
+
             bool cmdWait = false;
             if (args.Length <= 0)
             {

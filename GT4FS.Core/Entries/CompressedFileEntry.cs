@@ -7,8 +7,11 @@ using Syroot.BinaryData.Memory;
 
 namespace GT4FS.Core.Entries;
 
+/// <summary>
+/// Represents a compressed file entry in the file system.
+/// </summary>
 [DebuggerDisplay("CompressedFileEntry: {Name}")]
-public class CompressedFileEntry : Entry
+public class CompressedFileEntry : RecordEntry
 {
     public int CompressedSize { get; set; }
     public int Size { get; set; }
@@ -19,13 +22,13 @@ public class CompressedFileEntry : Entry
     public CompressedFileEntry(string name)
     { 
         Name = name;
-        EntryType = VolumeEntryType.CompressedFile;
+        EntryType = RecordType.CompressedFile;
     }
 
-    public override ushort GetTypeMetaSize()
+    public override ushort GetEntryInfoSize()
         => 1 + 4 + 4 + 4 + 4; // Type + Page Offset + Date + Comp Size + Size
 
-    public override void SerializeTypeMeta(ref SpanWriter writer)
+    public override void SerializeEntryInfo(ref SpanWriter writer)
     {
         writer.WriteByte((byte)EntryType);
 

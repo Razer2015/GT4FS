@@ -20,12 +20,12 @@ public class BTree : IDisposable
     private readonly Volume _volume;
     private readonly QueueWriter _queueWriter;
     public List<ToCPage> Pages { get; set; }
-    private List<Entry> _nodeEntries;
+    private List<RecordEntry> _nodeEntries;
 
     public BTree(Volume volume, ILogWriter logWriter = null)
     {
         _volume = volume;
-        Pages = new List<ToCPage>();
+        Pages = [];
         _queueWriter = logWriter != null ? new QueueWriter(logWriter) : null;
     }
 
@@ -42,34 +42,32 @@ public class BTree : IDisposable
     public bool ExtractAllFiles(string outputPath, string volName = null, bool overwrite = false)
     {
         Directory.CreateDirectory(outputPath);
-        using (var sw = new StreamWriter(Path.Combine(outputPath, $"{(string.IsNullOrEmpty(volName) ? "" : $"{volName}_")}extract.log"), true))
+        using var sw = new StreamWriter(Path.Combine(outputPath, $"{(string.IsNullOrEmpty(volName) ? "" : $"{volName}_")}extract.log"), true);
+        sw.WriteLine($"Extraction started: {DateTime.Now.ToString(CultureInfo.InvariantCulture)}");
+        var stopwatch = new Stopwatch();
+        stopwatch.Start();
+
+        _volume.VOLReader.ByteConverter = ByteConverter.Big;
+        var files = GetAllFiles();
+        foreach (var file in files)
         {
-            sw.WriteLine($"Extraction started: {DateTime.Now.ToString(CultureInfo.InvariantCulture)}");
-            var stopwatch = new Stopwatch();
-            stopwatch.Start();
-
-            _volume.VOLReader.ByteConverter = ByteConverter.Big;
-            var files = GetAllFiles();
-            foreach (var file in files)
-            {
-                var destPath = Path.Combine(outputPath, file.Path).Replace("/", "\\");
-                if (ExtractFile(_volume.VOLReader, file.Offset, file.PackedSize, file.RealSize, file.ModifiedDate, destPath, out var sourcePath, overwrite))
-                    sw.WriteLine($"Successfully extracted: {sourcePath} to {destPath}");
-                else
-                    sw.WriteLine($"Failed to extract: {sourcePath} to {destPath}");
-            }
-
-            _queueWriter?.Enqueue("All files extracted!");
-
-            stopwatch.Stop();
-            // Get the elapsed time as a TimeSpan value.
-            TimeSpan ts = stopwatch.Elapsed;
-
-            // Format and display the TimeSpan value.
-            string elapsedTime = $"{ts.Hours:00}:{ts.Minutes:00}:{ts.Seconds:00}.{ts.Milliseconds / 10:00}";
-            sw.WriteLine("Time elapsed for extraction: " + elapsedTime);
-            sw.WriteLine(string.Empty);
+            var destPath = Path.Combine(outputPath, file.Path).Replace("/", "\\");
+            if (ExtractFile(_volume.VOLReader, file.Offset, file.PackedSize, file.RealSize, file.ModifiedDate, destPath, out var sourcePath, overwrite))
+                sw.WriteLine($"Successfully extracted: {sourcePath} to {destPath}");
+            else
+                sw.WriteLine($"Failed to extract: {sourcePath} to {destPath}");
         }
+
+        _queueWriter?.Enqueue("All files extracted!");
+
+        stopwatch.Stop();
+        // Get the elapsed time as a TimeSpan value.
+        TimeSpan ts = stopwatch.Elapsed;
+
+        // Format and display the TimeSpan value.
+        string elapsedTime = $"{ts.Hours:00}:{ts.Minutes:00}:{ts.Seconds:00}.{ts.Milliseconds / 10:00}";
+        sw.WriteLine("Time elapsed for extraction: " + elapsedTime);
+        sw.WriteLine(string.Empty);
 
         return true;
     }
@@ -98,7 +96,7 @@ public class BTree : IDisposable
         return true;
     }
 
-    private void TraverseNodes(List<Entry> nodeEntries, StreamWriter sw, uint parentNodeID, int depth, List<string> prefixFolders, bool debugInfo)
+    private void TraverseNodes(List<RecordEntry> nodeEntries, StreamWriter sw, uint parentNodeID, int depth, List<string> prefixFolders, bool debugInfo)
     {
         var nodes = nodeEntries.Where(x => x.ParentNode == parentNodeID);
         for (int i = 0; i < nodes.Count(); i++)
@@ -107,7 +105,7 @@ public class BTree : IDisposable
 
             switch (node.EntryType)
             {
-                case VolumeEntryType.Directory:
+                case RecordType.Directory:
                     DirEntry dir = node as DirEntry;
                     var folders = new List<string>(prefixFolders);
                     if (nodes.Count() - 1 > i)
@@ -122,7 +120,7 @@ public class BTree : IDisposable
                     }
                     TraverseNodes(nodeEntries, sw, (uint)dir.NodeID, depth++, folders, debugInfo);
                     break;
-                case VolumeEntryType.File: // File
+                case RecordType.File: // File
                     var file = node as FileEntry;
                     if (nodes.Count() - 1 > i)
                         sw?.WriteLine($"{string.Join("", prefixFolders)}├── {node.Name}{(debugInfo ? $" [P:{node.ParentNode}] (Offset: 0x{_volume.GetFileOffset((uint)file.PageOffset):X8} - RealSize: 0x{file.Size:X8} - ModifiedDate: {file.ModifiedDate:s})" : "")}");
@@ -130,7 +128,7 @@ public class BTree : IDisposable
                         sw?.WriteLine($"{string.Join("", prefixFolders)}└── {node.Name}{(debugInfo ? $" [P:{node.ParentNode}] (Offset: 0x{_volume.GetFileOffset((uint)file.PageOffset):X8} - RealSize: 0x{file.Size:X8} - ModifiedDate: {file.ModifiedDate:s})" : "")}");
                     break;
 
-                case VolumeEntryType.CompressedFile: // Compressed file
+                case RecordType.CompressedFile: // Compressed file
                     var cfile = node as CompressedFileEntry;
                     if (nodes.Count() - 1 > i)
                         sw?.WriteLine($"{string.Join("", prefixFolders)}├── {node.Name}{(debugInfo ? $" [P:{node.ParentNode}] [Z] (Offset: 0x{_volume.GetFileOffset((uint)cfile.PageOffset):X8} - Size: 0x{cfile.CompressedSize:X8} - RealSize: 0x{cfile.Size:X8} - ModifiedDate: {cfile.ModifiedDate:s})" : "")}");
@@ -156,13 +154,13 @@ public class BTree : IDisposable
             .ToList();
     }
 
-    public List<Entry> GetNodes()
+    public List<RecordEntry> GetNodes()
     {
         if (_nodeEntries == null)
             Read();
 
         // Build relationships/children
-        foreach (Entry node in _nodeEntries)
+        foreach (RecordEntry node in _nodeEntries)
         {
             if (node.Name == ".")
                 continue;
@@ -188,9 +186,9 @@ public class BTree : IDisposable
             Read();
 
         var files = new List<(string Path, long Offset, uint PackedSize, uint RealSize, DateTime ModifiedDate)>();
-        foreach (Entry nodeEntry in _nodeEntries)
+        foreach (RecordEntry nodeEntry in _nodeEntries)
         {
-            if (nodeEntry.EntryType == VolumeEntryType.Directory)
+            if (nodeEntry.EntryType == RecordType.Directory)
                 continue;
 
             try
@@ -213,12 +211,12 @@ public class BTree : IDisposable
         return files;
     }
 
-    private string BuildPath(Entry nodeEntry)
+    private string BuildPath(RecordEntry nodeEntry)
     {
         if (nodeEntry.ParentNode == 0)
             return string.Empty;
 
-        Entry parentNode = _nodeEntries.Find(x => x.NodeID == nodeEntry.ParentNode);
+        RecordEntry parentNode = _nodeEntries.Find(x => x.NodeID == nodeEntry.ParentNode);
         if (parentNode is null)
             ArgumentNullException.ThrowIfNull(parentNode);
 
@@ -251,7 +249,7 @@ public class BTree : IDisposable
             if (data.Length > 4 && BinaryPrimitives.ReadUInt32BigEndian(data.AsSpan(0, 4)) - 0xC5EEF7FFu == 0)
                 data = PS2Zip.Inflate(data);
 
-            Debug.Assert(data.Length == realSize);
+           Debug.Assert(data.Length == realSize, "Decompressed size did not match expected size");
 
             File.WriteAllBytes(destPath, data);
             File.SetLastWriteTimeUtc(destPath, modifiedDate);

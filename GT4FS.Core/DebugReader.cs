@@ -38,9 +38,9 @@ public class DebugReader
         return debugReader;
     }
 
-    public Entry TraversePathFindEntry(int parentID, string path)
+    public RecordEntry TraversePathFindEntry(int parentID, string path)
     {
-        Entry entry = null;
+        RecordEntry entry = null;
 
         Debug.WriteLine($"Begin path traversal: '{path}'");
         foreach (var part in path.Split('/'))
@@ -48,7 +48,7 @@ public class DebugReader
             Debug.WriteLine($"Traversing: {part}, with parent node ID {parentID}");
             entry = GetEntryOfPathPart(parentID, part, part.Length);
 
-            if (entry.EntryType == VolumeEntryType.File || entry.EntryType == VolumeEntryType.CompressedFile)
+            if (entry.EntryType == RecordType.File || entry.EntryType == RecordType.CompressedFile)
                 return entry;
 
             parentID = entry.NodeID;
@@ -57,7 +57,7 @@ public class DebugReader
         return entry;
     }
 
-    public Entry GetEntryOfPathPart(int parentID, string part, int partLength)
+    public RecordEntry GetEntryOfPathPart(int parentID, string part, int partLength)
     {
         // Create input entry
         byte[] entryInput = new byte[4 + partLength];
@@ -90,7 +90,7 @@ public class DebugReader
 
             short entryTypeMetaOffset = sr.ReadInt16();
             sr.Position = entryTypeMetaOffset;
-            var entry = Entry.ReadEntryFromBuffer(ref sr);
+            var entry = RecordEntry.ReadEntryInfo(ref sr);
             entry.ParentNode = parentID;
             return entry;
         }
@@ -118,6 +118,7 @@ public class DebugReader
             int beginOffset = GetEntryOffset(index);
             int endOffset = GetEntryOffset(index + 1);
 
+            VolumeStream.Position = TocOffset + beginOffset;
             using var decompressStream = new MemoryStream();
             using var decompressionStream = new DeflateStream(new MemoryStream(VolumeStream.ReadBytes(endOffset - beginOffset)), CompressionMode.Decompress);
             decompressionStream.CopyTo(decompressStream);
@@ -300,7 +301,6 @@ public class DebugReader
         VolumeStream.Position = TocOffset + 0x12;
         ushort pageCount = VolumeStream.ReadUInt16();
 
-        
         PageInfo page = GetPage(0);
         PageDebugInfo pageDebInfo = new PageDebugInfo();
         pageDebInfo.ReadFromPageInfo(page);
@@ -313,6 +313,9 @@ public class DebugReader
 
             for (int i = 0; i < childPageDebInfo.Entries.Count; i++)
             {
+                if (i == childPageDebInfo.Entries.Count - 1)
+                    ;
+
                 PageDebugEntryInfo cutoff = childPageDebInfo.Entries[i];
                 // Get the entries in the middle
                 var prevEntryPage = GetPage(cutoff.PageIndex);
@@ -322,7 +325,6 @@ public class DebugReader
                 var nextEntryPage = GetPage(cutoff.PageIndex + 1);
                 PageDebugInfo nextEntryPageDebInfo = new PageDebugInfo();
                 nextEntryPageDebInfo.ReadFromPageInfo(nextEntryPage);
-
 
                 var lastEntry = prevEntryPageDebInfo.Entries[^1];
                 var nextEntry = nextEntryPageDebInfo.Entries[0];

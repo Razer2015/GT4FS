@@ -10,9 +10,9 @@ using Syroot.BinaryData;
 namespace GT4FS.Core {
     public class Volume : IDisposable
     {
-        public const int DefaultPageSize = 0x800;
+        public const ushort DEFAULT_PAGE_SIZE = 0x800;
         public const int OffsetCryptKey = 0x14ac327a;
-        public static readonly byte[] DataCryptKey = new byte[] { 0x55 };
+        public static readonly byte[] DataCryptKey = [0x55];
 
         private long _baseOffset = 0;
         private TocHeader _tocHeader;
@@ -67,14 +67,14 @@ namespace GT4FS.Core {
         private long BaseOffset()
         {
             VOLReader.ByteConverter = ByteConverter.Big;
-            for (int i = 0; i < Math.Min((VOLReader.BaseStream.Length / DefaultPageSize), 10000); i++)
+            for (int i = 0; i < Math.Min((VOLReader.BaseStream.Length / DEFAULT_PAGE_SIZE), 10000); i++)
             {
-                VOLReader.BaseStream.Seek(i * DefaultPageSize, SeekOrigin.Begin);
+                VOLReader.BaseStream.Seek(i * DEFAULT_PAGE_SIZE, SeekOrigin.Begin);
                 int magic = VOLReader.ReadInt32();
                 if ((magic == TocHeader.MagicValueEncrypted || magic == 0x526f4653)
                     && VOLReader.ReadInt32(ByteConverter.Little) == TocHeader.Version3_1)
                 {
-                    return i * DefaultPageSize;
+                    return i * DEFAULT_PAGE_SIZE;
                 }
             }
 
@@ -102,7 +102,7 @@ namespace GT4FS.Core {
 
         private void ReadEntryOffsets()
         {
-            _offsets = new List<int>();
+            _offsets = [];
 
             VOLReader.ByteConverter = ByteConverter.Little;
             VOLReader.BaseStream.Seek(_baseOffset + TocHeader.HeaderSize, SeekOrigin.Begin);
@@ -126,22 +126,20 @@ namespace GT4FS.Core {
 
 #if DEBUG
             // Debug write what has been decrypted so far (TOC header and page offsets)
-            using (var ms = new MemoryStream())
-            using (var writer = new BinaryStream(ms))
-            {
-                _tocHeader.Write(writer);
-                writer.Write(_firstPageOffset);
-                foreach (var offset in _offsets)
-                    writer.Write(offset);
+            using var ms = new MemoryStream();
+            using var writer = new BinaryStream(ms);
+            _tocHeader.Write(writer);
+            writer.Write(_firstPageOffset);
+            foreach (var offset in _offsets)
+                writer.Write(offset);
 
-                File.WriteAllBytes("offsetTable.bin", ms.ToArray());
-            }
+            File.WriteAllBytes("offsetTable.bin", ms.ToArray());
 #endif
         }
 
         private void ReadPages()
         {
-            Pages = new List<(long Offset, int Length)>();
+            Pages = [];
             _offsets.Aggregate(_firstPageOffset, (acc, x) =>
             {
                 Pages.Add((_baseOffset + acc, x - acc));
@@ -153,50 +151,45 @@ namespace GT4FS.Core {
         {
             VOLReader.ByteConverter = ByteConverter.Little;
             VOLReader.BaseStream.Seek(offset, SeekOrigin.Begin);
-            using (var decompressStream = new MemoryStream())
-            {
-                using (var decompressionStream = new DeflateStream(new MemoryStream(VOLReader.ReadBytes(length)), CompressionMode.Decompress))
-                {
-                    decompressionStream.CopyTo(decompressStream);
-                    if (_tocHeader.Encrypted)
-                        return PS2Zip.XorEncript(decompressStream.ToArray(), DataCryptKey);
-                    else
-                        return decompressStream.ToArray();
-                }
-            }
+
+            using var decompressStream = new MemoryStream();
+            using var decompressionStream = new DeflateStream(new MemoryStream(VOLReader.ReadBytes(length)), CompressionMode.Decompress);
+            decompressionStream.CopyTo(decompressStream);
+            if (_tocHeader.Encrypted)
+                return PS2Zip.XorEncript(decompressStream.ToArray(), DataCryptKey);
+            else
+                return decompressStream.ToArray();
         }
 
         private void DebugWritePages()
         {
-            using (var ms = new MemoryStream())
-            using (var writer = new BinaryStream(ms))
+            using var ms = new MemoryStream();
+            using var writer = new BinaryStream(ms);
+            _tocHeader.Write(writer);
+            writer.Write(_firstPageOffset);
+            foreach (var offset in _offsets)
+                writer.Write(offset);
+
+            // Pages
+            Directory.CreateDirectory("pages");
+            using (var sw = new StreamWriter("pages.txt"))
             {
-                _tocHeader.Write(writer);
-                writer.Write(_firstPageOffset);
-                foreach (var offset in _offsets)
-                    writer.Write(offset);
-
-                // Pages
-                Directory.CreateDirectory("pages");
-                using (var sw = new StreamWriter("pages.txt"))
+                int index = 0;
+                foreach (var (Offset, Length) in Pages)
                 {
-                    int index = 0;
-                    foreach (var (Offset, Length) in Pages)
-                    { 
-                        var buffer = GetPage(Offset, Length);
-                        writer.Write(buffer);
+                    var buffer = GetPage(Offset, Length);
+                    writer.Write(buffer);
 
-                        using (var ms2 = new MemoryStream(buffer))
-                        using (var reader = new BinaryStream(ms2, ByteConverter.Big))
-                            sw.WriteLine($"{index,4} - {reader.ReadInt16():X4} {reader.ReadInt16():X4} {reader.ReadInt32():X8} {reader.ReadInt32():X8} {reader.ReadInt32():X8}");
+                    using (var ms2 = new MemoryStream(buffer))
+                    using (var reader = new BinaryStream(ms2, ByteConverter.Big))
+                        sw.WriteLine($"{index,4} - {reader.ReadInt16():X4} {reader.ReadInt16():X4} {reader.ReadInt32():X8} {reader.ReadInt32():X8} {reader.ReadInt32():X8}");
 
-                        //File.WriteAllBytes($"pages\\page_{index}.bin", buffer);
-                        index++;
-                    }
+                    //File.WriteAllBytes($"pages\\page_{index}.bin", buffer);
+                    index++;
                 }
-
-                File.WriteAllBytes("toc.bin", ms.ToArray());
             }
+
+            File.WriteAllBytes("toc.bin", ms.ToArray());
         }
 
         public void Dispose()

@@ -7,22 +7,25 @@ using Syroot.BinaryData.Memory;
 
 namespace GT4FS.Core.Entries;
 
+/// <summary>
+/// Represents a directory entry in the file system.
+/// </summary>
 [DebuggerDisplay("DirEntry: {Name}")]
-public class DirEntry : Entry
+public class DirEntry : RecordEntry
 {
-    public SortedDictionary<string, Entry> ChildEntries { get; set; } = new(StringComparer.Ordinal);
+    public SortedDictionary<string, RecordEntry> ChildEntries { get; set; } = new(StringComparer.Ordinal);
 
     public DirEntry() { }
     public DirEntry(string name)
     { 
         Name = name;
-        EntryType = VolumeEntryType.Directory;
+        EntryType = RecordType.Directory;
     }
 
-    public override ushort GetTypeMetaSize()
+    public override ushort GetEntryInfoSize()
         => 1 + 4; // Type + Node ID
 
-    public override void SerializeTypeMeta(ref SpanWriter writer)
+    public override void SerializeEntryInfo(ref SpanWriter writer)
     {
         writer.WriteByte((byte)EntryType);
         writer.WriteInt32(NodeID);

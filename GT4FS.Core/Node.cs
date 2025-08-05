@@ -9,62 +9,61 @@ using Syroot.BinaryData.Memory;
 using GT.Shared.Polyphony;
 using GT4FS.Core.Entries;
 
-namespace GT4FS.Core
+namespace GT4FS.Core;
+
+public class ToCPage
 {
-    public class ToCPage
+    public short Flag { get; set; }
+    public short EntryCount { get; set; }
+    public int NextPage { get; set; }
+    public int PreviousPage { get; set; }
+    public List<RecordEntry> NodeEntries { get; set; }
+
+    private readonly byte[] _pageData;
+
+    public ToCPage(byte[] data)
     {
-        public short Flag { get; set; }
-        public short EntryCount { get; set; }
-        public int NextPage { get; set; }
-        public int PreviousPage { get; set; }
-        public List<Entry> NodeEntries { get; set; }
+        _pageData = data;
+        NodeEntries = [];
+        Read();
+    }
 
-        private readonly byte[] _pageData;
+    public void Read()
+    {
+        SpanReader reader = new SpanReader(_pageData);
 
-        public ToCPage(byte[] data)
+        Flag = reader.ReadInt16();
+        EntryCount = reader.ReadInt16();
+        NextPage = reader.ReadInt32();
+        PreviousPage = reader.ReadInt32();
+
+        if (Flag != 0)
+            return;
+
+        int pageEndPos = _pageData.Length;
+        int realEntryCount = EntryCount / 2;
+        for (var i = 0; i < realEntryCount; i++)
         {
-            _pageData = data;
-            NodeEntries = new List<Entry>();
-            Read();
-        }
+            reader.Position = pageEndPos - ((i * 0x08) + 0x08);
 
-        public void Read()
-        {
-            SpanReader reader = new SpanReader(_pageData);
+            short entryOffset = reader.ReadInt16();
+            short entryLength = reader.ReadInt16();
+            short entryTypeMetaOffset = reader.ReadInt16();
+            short entryTypeMetaLength = reader.ReadInt16();
 
-            Flag = reader.ReadInt16();
-            EntryCount = reader.ReadInt16();
-            NextPage = reader.ReadInt32();
-            PreviousPage = reader.ReadInt32();
+            reader.Position = entryOffset;
 
-            if (Flag != 0)
-                return;
+            reader.Endian = Endian.Big;
+            int parentID = reader.ReadInt32();
+            reader.Endian = Endian.Little;
 
-            int pageEndPos = _pageData.Length;
-            int realEntryCount = EntryCount / 2;
-            for (var i = 0; i < realEntryCount; i++)
-            {
-                reader.Position = pageEndPos - ((i * 0x08) + 0x08);
+            string name = reader.ReadStringRaw(entryLength - 4);
 
-                short entryOffset = reader.ReadInt16();
-                short entryLength = reader.ReadInt16();
-                short entryTypeMetaOffset = reader.ReadInt16();
-                short entryTypeMetaLength = reader.ReadInt16();
-
-                reader.Position = entryOffset;
-
-                reader.Endian = Endian.Big;
-                int parentID = reader.ReadInt32();
-                reader.Endian = Endian.Little;
-
-                string name = reader.ReadStringRaw(entryLength - 4);
-
-                reader.Position = entryTypeMetaOffset;
-                var entry = Entry.ReadEntryFromBuffer(ref reader);
-                entry.Name = name;
-                entry.ParentNode = parentID;
-                NodeEntries.Add(entry);
-            }
+            reader.Position = entryTypeMetaOffset;
+            var entry = RecordEntry.ReadEntryInfo(ref reader);
+            entry.Name = name;
+            entry.ParentNode = parentID;
+            NodeEntries.Add(entry);
         }
     }
 }

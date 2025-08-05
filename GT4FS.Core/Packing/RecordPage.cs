@@ -1,14 +1,15 @@
-﻿using System;
+﻿using GT4FS.Core.Entries;
+
+using Syroot.BinaryData;
+using Syroot.BinaryData.Core;
+using Syroot.BinaryData.Memory;
+
+using System;
 using System.Collections.Generic;
+using System.IO.Pipelines;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
-
-using Syroot.BinaryData.Core;
-using Syroot.BinaryData;
-using Syroot.BinaryData.Memory;
-
-using GT4FS.Core.Entries;
 
 namespace GT4FS.Core.Packing;
 
@@ -19,86 +20,72 @@ public class RecordPage : PageBase
 {
     public override PageType Type => PageType.PT_RECORD;
 
-    public const int HeaderSize = 0x0C;
-    public const int TocEntrySize = 0x08;
-
     public Entry FirstEntry { get; set; }
     public Entry LastEntry { get; set; }
 
-    public RecordPage(int pageSize)
-    {
-        PageSize = pageSize;
-        Buffer = new byte[PageSize];
-        _spaceLeft = pageSize - HeaderSize - TocEntrySize; // Account for the last page entry "terminator" behind the bottom ToC
+    public RecordPage(ushort pageSize)
+        : base(pageSize) { }
 
-        LastPosition = HeaderSize;
+    public bool TryAddEntry(RecordEntry entry)
+    {
+        int entryOffset = PageBase.PAGE_HEADER_SIZE + EntriesInfoSize;
+        int newEntryInfoSize = entry.GetTotalSize(entryOffset);
+        int currentSpaceTaken = PageBase.PAGE_HEADER_SIZE +
+            EntriesInfoSize + // Entries info
+            (4 + (Entries.Count * PAGE_TOC_ENTRY_SIZE)); // Bottom toc
+
+        if (currentSpaceTaken + (newEntryInfoSize + PageBase.PAGE_TOC_ENTRY_SIZE) > PageSize)
+            return false;
+
+        Entries.Add(entry);
+        EntriesInfoSize += newEntryInfoSize;
+        return true;
     }
 
-    public bool HasSpaceToWriteEntry(Entry entry)
+    public override void Serialize(ref SpanWriter writer)
     {
-        int entrySize = entry.GetTotalSize(LastPosition);
-        return entrySize + TocEntrySize <= _spaceLeft;   
-    }
+        int basePageOffset = writer.Position;
+        writer.WriteUInt16(0); // IsIndexingBlock
+        writer.WriteUInt16((ushort)((Entries.Count * 2) + 1));
+        writer.WriteInt32(NextPage?.PageIndex ?? -1);
+        writer.WriteInt32(PreviousPage?.PageIndex ?? -1);
 
-    public void WriteEntry(Entry entry)
-    {
-        int entrySize = entry.GetTotalSize(LastPosition);
-        if (entrySize + TocEntrySize > _spaceLeft)
-            throw new Exception("Not enough space to write entry.");
+        int lastEntryOffset = writer.Position;
+        for (int i = 0; i < Entries.Count; i++)
+        {
+            RecordEntry recordEntry = (RecordEntry)Entries[i];
+            writer.Position = lastEntryOffset;
+            int entryOffset = lastEntryOffset;
 
-        if (EntryCount == 0)
-            FirstEntry = entry;
+            {   // Like IndexPage, this is also an index.
+                writer.Endian = Endian.Big;
+                writer.WriteInt32(recordEntry.ParentNode);
+                writer.Endian = Endian.Little;
+                writer.WriteStringRaw(recordEntry.Name);
+                writer.Align(0x04);
+            }
 
-        SpanWriter pageWriter = new SpanWriter(Buffer);
-        pageWriter.Position = LastPosition;
+            int entryDataOffset = writer.Position;
+            recordEntry.SerializeEntryInfo(ref writer);
+            int dataSize = writer.Position - entryDataOffset;
+            writer.Align(0x04);
+            lastEntryOffset = writer.Position;
 
-        // Begin to write the entry's common information
-        // Not actually BE, both are writen as indexing buffer
-        int entryOffset = pageWriter.Position;
-        pageWriter.Endian = Endian.Big;
-        pageWriter.WriteInt32(entry.ParentNode);
-        pageWriter.Endian = Endian.Little;
-        pageWriter.WriteStringRaw(entry.Name);
-        pageWriter.Align(0x04); // Entry is aligned
-
-        // Write type specific
-        int entryMetaOffset = pageWriter.Position;
-        entry.SerializeTypeMeta(ref pageWriter);
-        pageWriter.Align(0x04); // Whole entry is also aligned
-
-        LastPosition = pageWriter.Position;
-        _spaceLeft -= entrySize + TocEntrySize; // Include the page's toc entry
-
-        // Write the lookup information at the end of the page
-        pageWriter.Position = PageSize - (EntryCount + 1) * TocEntrySize;
-        pageWriter.WriteUInt16((ushort)entryOffset);
-        pageWriter.WriteUInt16((ushort)entry.GetEntryMetaSize());
-        pageWriter.WriteUInt16((ushort)entryMetaOffset);
-        pageWriter.WriteUInt16(entry.GetTypeMetaSize());
-
-        // Move on to next.
-        EntryCount++;
-    }
-
-    public override void FinalizeHeader()
-    {
-        var pageWriter = new SpanWriter(Buffer);
-        pageWriter.Position = LastPosition;
-
-        // Write up the page info - write what we can write - the entry count
-        pageWriter.Position = 0;
-        pageWriter.WriteUInt16((ushort)Type);
-        pageWriter.WriteUInt16((ushort)((EntryCount * 2) + 1));
+            
+            // Reverse order
+            writer.Position = (basePageOffset + PageSize) - ((i + 1) * PAGE_TOC_ENTRY_SIZE);
+            writer.WriteUInt16((ushort)(entryOffset - basePageOffset));
+            writer.WriteUInt16((ushort)recordEntry.GetIndexerSize());
+            writer.WriteUInt16((ushort)(entryDataOffset - basePageOffset));
+            writer.WriteUInt16((ushort)dataSize);
+        }
 
         // Write end offset terminator - skip to last of page toc and write it behind it
         // NOTE: It doesn't seem to be used, but let's write it anyway
-        //       This is similar to the index pages were the very last node ID is stored for bsearch
-        //       Except the offset to the "last" entry is stored here, even though it's void, so it's effectively the last position
-        pageWriter.Position = PageSize - (EntryCount * TocEntrySize) - TocEntrySize;
-        pageWriter.WriteInt16(0);
-        pageWriter.WriteInt16(0);
-        pageWriter.WriteInt16(0);
-        pageWriter.WriteInt16((short)LastPosition);
-
+        //       This is similar to the index pages were the very last node ID *would* be stored for bsearch
+        //       Except the offset to the "last" entry is written here, even though it's void, so it's effectively the last position
+        writer.Position = (basePageOffset + PageSize) - ((Entries.Count) * PAGE_TOC_ENTRY_SIZE) - 4;
+        writer.WriteUInt16(0);
+        writer.WriteUInt16((ushort)lastEntryOffset);
     }
 }
