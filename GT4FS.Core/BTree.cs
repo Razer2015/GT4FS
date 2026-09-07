@@ -51,7 +51,7 @@ public class BTree : IDisposable
         var files = GetAllFiles();
         foreach (var file in files)
         {
-            var destPath = Path.Combine(outputPath, file.Path).Replace("/", "\\");
+            var destPath = Path.Combine(outputPath, file.Path);
             if (ExtractFile(_volume.VOLReader, file.Offset, file.PackedSize, file.RealSize, file.ModifiedDate, destPath, out var sourcePath, overwrite))
                 sw.WriteLine($"Successfully extracted: {sourcePath} to {destPath}");
             else

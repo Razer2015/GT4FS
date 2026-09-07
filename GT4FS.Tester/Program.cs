@@ -139,7 +139,7 @@ namespace GT4FS.Tester
             }
 
             Console.WriteLine($"Writing file list for {options.Input}...");
-            btree.WriteFileList(options.Output, volName: options.Input, debugInfo: options.Debug);
+            btree.WriteFileList(options.Output, volName: Path.GetFileName(options.Input), debugInfo: options.Debug);
         }
 
         private void DebugRead(string volFile, int tocPageOffset, string volPath)
@@ -171,7 +171,7 @@ namespace GT4FS.Tester
             }
 
             Console.WriteLine($"Extracting files from {options.Input}...");
-            btree.ExtractAllFiles(options.Output, volName: options.Input, overwrite: options.Overwrite);
+            btree.ExtractAllFiles(options.Output, volName: Path.GetFileName(options.Input), overwrite: options.Overwrite);
         }
 
         private static void RunPack(PackOptions options)
