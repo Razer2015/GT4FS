@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "GT.Shared": {
+      "commandName": "Project",
+      "commandLineArgs": "extract -r \"D:\\Modding_Research\\Gran_Turismo\\Gran_Turismo_HD\\1.2_US\\NPUA80019\\USRDIR\\GT4.VOL\""
+    }
+  }
+}

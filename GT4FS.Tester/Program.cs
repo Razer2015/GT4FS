@@ -1,302 +1,313 @@
-﻿using CommandLine;
-using DiscUtils;
+﻿using DiscUtils;
+
 using GT.Shared.Enums;
 using GT.Shared.FileSystem;
 using GT.Shared.Logging;
-using GT4FS.Core;
-using System;
-using System.IO;
 
+using GT4FS.Core;
 using GT4FS.Core.Packing;
 
-namespace GT4FS.Tester
+using System;
+using System.CommandLine;
+using System.IO;
+using System.Threading.Tasks;
+
+namespace GT4FS.Tester;
+
+public class Program
 {
-    class Program
+    static async Task<int> Main(string[] args)
     {
-        [Verb("info", HelpText = "Print out information.")]
-        class InfoOptions
+        // Uncomment for debug reading
+        // Check debug logs tab in VS.
+        // var reader = DebugReader.FromVolume(@"GTNew.VOL", (int)RoFSBuilder.GetRealToCOffsetForGame(GameVolumeType.GT4_ONLINE) * 0x800);
+        // var ent = reader.TraversePathFindEntry(1, "dnas/auth_dna_beta.dat");
+
+        bool cmdWait = false;
+        if (args.Length <= 0)
         {
-            [Option('r', "read", Required = true, HelpText = "Input file to be processed (GT.VOL file).")]
-            public string Input { get; set; }
+            if (!PrintEasterEgg())
+                return 0;
 
-            [Option('o', "output", Required = false, HelpText = "Directory to output to (Default: information).")]
-            public string Output { get; set; }
-
-            [Option('d', "debug", Required = false, HelpText = "Write debug information (You most likely don't want this).")]
-            public bool Debug { get; set; }
-
-            [Option('v', "verbose", Required = false, HelpText = "Set output to verbose messages.")]
-            public bool Verbose { get; set; }
+            cmdWait = true;
         }
 
-        [Verb("extract", HelpText = "Extract the GT4, GTHD, TT game content.")]
-        class ExtractOptions
+        var infoCommand = new Command("info", "Print out information.")
         {
-            [Option('r', "read", Required = true, HelpText = "Input file to be processed (GT.VOL file).")]
-            public string Input { get; set; }
+            new Option<string>("--read", aliases: ["-r"]) { Required = true, Description = "Input file to be processed (GT.VOL file)." },
+            new Option<string>("--output", aliases: ["-o"]) { Description = "Directory to output to (Default: information)." },
+            new Option<bool>("--force", ["-f"]) { Description = "Overwrite any files if they already exist when extracting?" },
+            new Option<bool>("--verbose", ["-v"]) { Description = "Set output to verbose messages." },
+        };
+        infoCommand.SetAction(RunInfo);
 
-            [Option('o', "output", Required = false, HelpText = "Directory to extract to (Default: extracted).")]
-            public string Output { get; set; }
-
-            [Option('f', "force", Required = false, HelpText = "Overwrite any files if they already exist when extracting?")]
-            public bool Overwrite { get; set; }
-
-            [Option('v', "verbose", Required = false, HelpText = "Set output to verbose messages.")]
-            public bool Verbose { get; set; }
-        }
-
-        [Verb("pack", HelpText = "Pack GT4, GTHD, TT game content.")]
-        class PackOptions
+        var extractCommand = new Command("extract", "Extract the GT4, GTHD, TT game content.")
         {
-            [Option('r', "read", Required = true, HelpText = "Input folder to be processed (folder to pack).")]
-            public string Input { get; set; }
+            new Option<string>("--read", aliases: ["-r"]) { Required = true, Description = "Input file to be processed (GT.VOL file)." },
+            new Option<string>("--output", aliases: ["-o"]) { Description = "Directory to extract to (Default: extracted)." },
+            new Option<bool>("--debug", ["-d"]) { Description = "Write debug information (You most likely don't want this)." },
+            new Option<bool>("--verbose", ["-v"]) { Description = "Set output to verbose messages." },
+        };
+        extractCommand.SetAction(RunExtract);
 
-            [Option('o', "output", HelpText = "File to pack to (Default: GTNew.VOL).")]
-            public string Output { get; set; } = "GTNew.VOL";
-
-            [Option('g', "game", Required = true, HelpText = "Target game to pack the volume for. " +
-                "Supported: GT4, GT4_ONLINE, GTHD, TT, TT_DEMO, GT4_MX5_DEMO, GT4_FIRST_PREV, or CUSTOM for a custom one (use --toc-offset).")]
-            public string GameType { get; set; }
-
-            [Option("toc-offset", HelpText = "Toc offset to use when packing as custom game type.")]
-            public int TocOffset { get; set; } = -1;
-
+        var packCommand = new Command("pack", "Pack GT4, GTHD, TT game content.")
+        {
+            new Option<string>("--read", aliases: ["-r"]) { Required = true, Description = "Input folder to be processed (folder to pack)." },
+            new Option<string>("--output", aliases: ["-o"]) { Description = "File to pack to (Default: GTNew.VOL).", DefaultValueFactory = (e) => "GTNew.VOL" },
+            new Option<string>("--game", ["-g"]) { Required = true, Description = "Target game to pack the volume for. " +
+                "Supported: GT4, GT4_ONLINE, GTHD, TT, TT_DEMO, GT4_MX5_DEMO, GT4_FIRST_PREV, or CUSTOM for a custom one (use --toc-offset)." },
+            new Option<int>("--toc-offset") { Description = "Toc offset to use when packing as custom game type.",
+                DefaultValueFactory = (e) => -1
+            },
             /* Wouldn't work when set to 0x1000 (boot crash), not sure why. Needs more debugging. Probably something that is required to be on a 0x800 alignment basis.
-            [Option('b', "page-size", HelpText = "Advanced Users. Sets the file system's page size. Default is 0x800/2048.")]
-            public ushort PageSize { get; set; } */
+             * new Option<ushort>("--page-size") { Description = "Advanced Users. Sets the file system's page size. Default is 0x800/2048."}, 
+             */
+            new Option<bool>("--decrypted", ["-d"]) { Description = "Build the volume without header encryption. Default is decrypted (game's default is encrypted).",
+                DefaultValueFactory = (e) => true
+            },
+            new Option<bool>("--no-compress") { Description = "Build the volume without compression. (Speeds up packing but overall volume size is greatly increased!)" },
+            new Option<bool>("--no-merge") { Description = "Build the volume and avoids merging data and ToC together. Optional - speeds up building by skipping merge part. Do not use Apache3 for this (broken)." },
+            new Option<bool>("--verbose", ["-v"]) { Description = "Set output to verbose messages." },
+        };
+        packCommand.SetAction(RunPack);
 
-            [Option('d', "decrypted", HelpText = "Build the volume without header encryption. Default is decrypted (game's default is encrypted).")]
-            public bool Decrypted { get; set; } = true;
+        var packAppendCommand = new Command("pack-append", "Same as 'pack', but will append to the existing VOL instead. Makes VOL edits almost instant, but MAKE A BACKUP OF YOUR ORIGINAL VOL!\n" +
+            "Do not use Apache3 for this (broken). You can keep appending files to the VOL afterwards.")
+        {
+            new Option<string>("--read", aliases: ["-r"]) { Required = true, Description = "Input file to be processed (GT.VOL file). Warning: It will be edited." },
+            new Option<string>("--append", aliases: ["-a"]) { Required = true, Description = "Folder with game contents to append to the VOL file. ONLY edited/added files from the game goes there, not the whole folder.\n" +
+                "Must match game directory structure to replace files." },
+        };
+        packAppendCommand.SetAction(RunPackAppend);
 
-            [Option("no-compress", HelpText = "Build the volume without compression. (Speeds up packing but overall volume size is greatly increased!)")]
-            public bool NoCompress { get; set; }
+        var rootCommand = new RootCommand("GT4FS")
+        {
+            infoCommand,
+            extractCommand,
+            packCommand,
+            packAppendCommand,
+        };
 
-            [Option("no-merge", HelpText = "Build the volume and avoids merging data and ToC together. Optional - speeds up building by skipping merge part. Do not use Apache3 for this (broken).")]
-            public bool NoMerge { get; set; }
+        int exitCode = await rootCommand.Parse(args).InvokeAsync();
+
+        if (cmdWait)
+        {
+            Console.WriteLine("Press any key to exit...");
+            Console.ReadLine();
         }
 
-        [Verb("pack-append", HelpText = "Same as 'pack', but will append to the existing VOL instead. Makes VOL edits almost instant, but MAKE A BACKUP OF YOUR ORIGINAL VOL! " +
-            "Do not use Apache3 for this (broken). You can keep appending files to the VOL afterwards.")]
-        class PackAppendOptions
+        return exitCode;
+    }
+
+    private static void RunInfo(ParseResult parseResult)
+    {
+        string? inputPath = parseResult.GetValue<string>("--read");
+        string? outputPath = parseResult.GetValue<string>("--output");
+        bool verbose = parseResult.GetValue<bool>("--verbose");
+        bool debug = parseResult.GetValue<bool>("--debug");
+
+        if (string.IsNullOrWhiteSpace(inputPath))
+            return;
+
+        BTree? btree = GetBTree(inputPath, verbose ? new ConsoleWriter() : null);
+        if (btree is null)
+            return;
+
+        // Output check
+        if (string.IsNullOrWhiteSpace(outputPath))
         {
-            [Option('r', "read", Required = true, HelpText = "Input file to be processed (GT.VOL file). Warning: It will be edited.")]
-            public string Input { get; set; }
-
-            [Option('a', "append", Required = true, HelpText = "Folder with game contents to append to the VOL file. ONLY edited/added files from the game goes there, not the whole folder. " +
-                "Must match game directory structure to replace files.")]
-            public string AppendFolder { get; set; }
-        }
-
-        static void Main(string[] args)
-        {
-            // Uncomment for debug reading
-            // Check debug logs tab in VS.
-            // var reader = DebugReader.FromVolume(@"GTNew.VOL", (int)RoFSBuilder.GetRealToCOffsetForGame(GameVolumeType.GT4_ONLINE) * 0x800);
-            // var ent = reader.TraversePathFindEntry(1, "dnas/auth_dna_beta.dat");
-
-            bool cmdWait = false;
-            if (args.Length <= 0)
+            FileAttributes attr = File.GetAttributes(inputPath);
+            if (attr.HasFlag(FileAttributes.Directory))
             {
-                if (!PrintEasterEgg())
-                    return;
-
-                cmdWait = true;
-            }
-
-            Parser.Default.ParseArguments<InfoOptions, ExtractOptions, PackOptions, PackAppendOptions>(args)
-                .WithParsed<InfoOptions>(RunInfo)
-                .WithParsed<ExtractOptions>(RunExtract)
-                .WithParsed<PackOptions>(RunPack)
-                .WithParsed<PackAppendOptions>(RunPackAppend);
-
-            if (cmdWait)
-            {
-                Console.WriteLine("Press any key to exit...");
-                Console.ReadLine();
-            }
-        }
-
-        private static void RunInfo(InfoOptions options)
-        {
-            BTree btree = GetBTree(options.Input, options.Verbose ? new ConsoleWriter() : null);
-            if (btree is null)
-                return;
-
-            // Output check
-            if (string.IsNullOrEmpty(options.Output))
-            {
-                FileAttributes attr = File.GetAttributes(options.Input);
-                if ((attr & FileAttributes.Directory) == FileAttributes.Directory)
-                {
-                    DirectoryInfo parentDir = Directory.GetParent(options.Input);
-                    options.Output = Path.Combine(parentDir.FullName, "information");
-                }
-                else
-                {
-                    var folder = Path.GetDirectoryName(options.Input);
-                    options.Output = Path.Combine(folder, "information");
-                }
-            }
-
-            Console.WriteLine($"Writing file list for {options.Input}...");
-            btree.WriteFileList(options.Output, volName: Path.GetFileName(options.Input), debugInfo: options.Debug);
-        }
-
-        private void DebugRead(string volFile, int tocPageOffset, string volPath)
-        {
-            DebugReader rdr = DebugReader.FromVolume(volFile, tocPageOffset);
-            rdr.TraversePathFindEntry(1, volPath);
-        }
-
-        private static void RunExtract(ExtractOptions options)
-        {
-            BTree btree = GetBTree(options.Input, options.Verbose ? new ConsoleWriter() : null);
-            if (btree is null)
-                return;
-
-            // Output check
-            if (string.IsNullOrEmpty(options.Output))
-            {
-                FileAttributes attr = File.GetAttributes(options.Input);
-                if ((attr & FileAttributes.Directory) == FileAttributes.Directory)
-                {
-                    DirectoryInfo parentDir = Directory.GetParent(options.Input);
-                    options.Output = Path.Combine(parentDir.FullName, "extracted");
-                }
-                else
-                {
-                    var folder = Path.GetDirectoryName(options.Input);
-                    options.Output = Path.Combine(folder, "extracted");
-                }
-            }
-
-            Console.WriteLine($"Extracting files from {options.Input}...");
-            btree.ExtractAllFiles(options.Output, volName: Path.GetFileName(options.Input), overwrite: options.Overwrite);
-        }
-
-        private static void RunPack(PackOptions options)
-        {
-            if (!Enum.TryParse(options.GameType, out GameVolumeType game) || game is GameVolumeType.Unknown)
-            {
-                Console.WriteLine("Error: Invalid game type provided.");
-                return;
-            }
-
-            uint tocOffset;
-            if (game == GameVolumeType.CUSTOM)
-            {
-                if (options.TocOffset <= -1)
-                {
-                    Console.WriteLine("Error: No custom toc offset provided.");
-                    return;
-                }
-
-                tocOffset = (uint)options.TocOffset;
+                DirectoryInfo? parentDir = Directory.GetParent(inputPath);
+                outputPath = Path.Combine(parentDir.FullName, "information");
             }
             else
-                tocOffset = RoFSBuilder.GetRealToCOffsetForGame(game);
-
-            var fsBuilder = new RoFSBuilder();
-            /*
-            if (options.PageSize != 0)
-                fsBuilder.SetPageSize(options.PageSize);
-            */
-
-            fsBuilder.SetCompressed(!options.NoCompress);
-            fsBuilder.SetEncrypted(!options.Decrypted);
-            fsBuilder.SetNoMergeTocMode(options.NoMerge);
-            fsBuilder.RegisterFilesToPack(options.Input);
-            fsBuilder.Build(options.Output, tocOffset);
+            {
+                var folder = Path.GetDirectoryName(inputPath);
+                outputPath = Path.Combine(folder, "information");
+            }
         }
 
-        private static void RunPackAppend(PackAppendOptions options)
+        Console.WriteLine($"Writing file list for {inputPath}...");
+        btree.WriteFileList(outputPath, volName: Path.GetFileName(inputPath), debugInfo: debug);
+    }
+
+    private void DebugRead(string volFile, int tocPageOffset, string volPath)
+    {
+        DebugReader rdr = DebugReader.FromVolume(volFile, tocPageOffset);
+        rdr.TraversePathFindEntry(1, volPath);
+    }
+
+    private static void RunExtract(ParseResult parseResult)
+    {
+        string? inputPath = parseResult.GetValue<string>("--read");
+        string? outputPath = parseResult.GetValue<string>("--output");
+        bool verbose = parseResult.GetValue<bool>("--verbose");
+        bool overwrite = parseResult.GetValue<bool>("--force");
+
+        if (string.IsNullOrWhiteSpace(inputPath))
+            return;
+
+        BTree? btree = GetBTree(inputPath, verbose ? new ConsoleWriter() : null);
+        if (btree is null)
+            return;
+
+        // Output check
+        if (string.IsNullOrEmpty(outputPath))
         {
-            var btree = GetBTree(options.Input);
-            if (btree is null)
+            FileAttributes attr = File.GetAttributes(inputPath);
+            if(attr.HasFlag(FileAttributes.Directory))
+            {
+                DirectoryInfo? parentDir = Directory.GetParent(inputPath);
+                outputPath = Path.Combine(parentDir.FullName, "extracted");
+            }
+            else
+            {
+                string? folder = Path.GetDirectoryName(inputPath);
+                outputPath = Path.Combine(folder, "extracted");
+            }
+        }
+
+        Console.WriteLine($"Extracting files from {inputPath}...");
+        btree.ExtractAllFiles(outputPath, volName: Path.GetFileName(inputPath), overwrite: overwrite);
+    }
+
+    private static void RunPack(ParseResult parseResult)
+    {
+        string? inputPath = parseResult.GetValue<string>("--read");
+        string? outputPath = parseResult.GetValue<string>("--output");
+        string? gameType = parseResult.GetValue<string>("--game");
+        int inputTocOffset = parseResult.GetValue<int>("--toc-offset");
+        // ushort pageSize = parseResult.GetValue<ushort>("--page-size");
+
+        bool noCompress = parseResult.GetValue<bool>("--no-compress");
+        bool decrypted = parseResult.GetValue<bool>("--decrypted");
+        bool noMerge = parseResult.GetValue<bool>("--no-merge");
+
+        if (!Enum.TryParse(gameType, out GameVolumeType game) || game is GameVolumeType.Unknown)
+        {
+            Console.WriteLine("Error: Invalid game type provided.");
+            return;
+        }
+
+        uint tocOffset;
+        if (game == GameVolumeType.CUSTOM)
+        {
+            if (inputTocOffset <= -1)
+            {
+                Console.WriteLine("Error: No custom toc offset provided.");
                 return;
+            }
 
-            RoFSBuilder fsBuilder = new RoFSBuilder();
-            fsBuilder.RegisterFilesFromBTree(btree, options.AppendFolder);
-            btree.Dispose();
+            tocOffset = (uint)inputTocOffset;
+        }
+        else
+            tocOffset = RoFSBuilder.GetRealToCOffsetForGame(game);
 
-            fsBuilder.SetAppendMode(true, btree.GetBaseDataOffset());
-            fsBuilder.Build(options.Input, (uint)btree.GetRealToCOffset());
+        var fsBuilder = new RoFSBuilder();
+        /*
+        if (pageSize != 0)
+            fsBuilder.SetPageSize(pageSize);
+        */
+
+        fsBuilder.SetCompressed(!noCompress);
+        fsBuilder.SetEncrypted(!decrypted);
+        fsBuilder.SetNoMergeTocMode(noMerge);
+        fsBuilder.RegisterFilesToPack(inputPath);
+        fsBuilder.Build(outputPath, tocOffset);
+    }
+
+    private static void RunPackAppend(ParseResult parseResult)
+    {
+        string? inputPath = parseResult.GetValue<string>("--read");
+        string? appendFolder = parseResult.GetValue<string>("--append");
+
+        BTree? btree = GetBTree(inputPath);
+        if (btree is null)
+            return;
+
+        RoFSBuilder fsBuilder = new RoFSBuilder();
+        fsBuilder.RegisterFilesFromBTree(btree, appendFolder);
+        btree.Dispose();
+
+        fsBuilder.SetAppendMode(true, btree.GetBaseDataOffset());
+        fsBuilder.Build(inputPath, (uint)btree.GetRealToCOffset());
+    }
+
+    private static BTree? GetBTree(string? file, ILogWriter? logWriter = null)
+    {
+        try
+        {
+            var fileLoader = new FileLoader(file);
+            var fileType = fileLoader.GetFileType();
+
+            switch (fileType)
+            {
+                case FileType.TOC31_VOL:
+                case FileType.TOC31_ISO:
+                    foreach (var (stream, fileName) in fileLoader.GetStreams())
+                    {
+                        var volume = new Volume(stream);
+                        volume.ReadVolume();
+                        return new BTree(volume, logWriter);
+                    }
+                    return null;
+                case FileType.TOC22_VOL:
+                case FileType.TOC22_ISO:
+                    Console.WriteLine("There are other tools that can handle extraction of this type of VOLs. Please use those (for example the one made by pez2k).");
+                    return null;
+                case FileType.GTPSP_VOL:
+                case FileType.GTPSP_ISO:
+                    Console.WriteLine("Gran Turismo PSP versions aren't supported by this tool. Wait for the next one ;)");
+                    return null;
+                case FileType.UNKNOWN:
+                default:
+                    Console.WriteLine("Unknown game type.");
+                    return null;
+            }
+        }
+        catch (ArgumentException aex)
+        {
+            Console.WriteLine(aex.Message);
+        }
+        catch (InvalidFileSystemException fsex)
+        {
+            Console.WriteLine(fsex.Message);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(ex);
         }
 
-        private static BTree GetBTree(string file, ILogWriter logWriter = null)
-        {
-            try
-            {
-                var fileLoader = new FileLoader(file);
-                var fileType = fileLoader.GetFileType();
-
-                switch (fileType)
-                {
-                    case FileType.TOC31_VOL:
-                    case FileType.TOC31_ISO:
-                        foreach (var (stream, fileName) in fileLoader.GetStreams())
-                        {
-                            var volume = new Volume(stream);
-                            volume.ReadVolume();
-                            return new BTree(volume, logWriter);
-                        }
-                        return null;
-                    case FileType.TOC22_VOL:
-                    case FileType.TOC22_ISO:
-                        Console.WriteLine("There are other tools that can handle extraction of this type of VOLs. Please use those (for example the one made by pez2k).");
-                        return null;
-                    case FileType.GTPSP_VOL:
-                    case FileType.GTPSP_ISO:
-                        Console.WriteLine("Gran Turismo PSP versions aren't supported by this tool. Wait for the next one ;)");
-                        return null;
-                    case FileType.UNKNOWN:
-                    default:
-                        Console.WriteLine("Unknown game type.");
-                        return null;
-                }
-            }
-            catch (ArgumentException aex)
-            {
-                Console.WriteLine(aex.Message);
-            }
-            catch (InvalidFileSystemException fsex)
-            {
-                Console.WriteLine(fsex.Message);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine(ex);
-            }
-
-            return null;
-        }
+        return null;
+    }
 
 
-        private static bool PrintEasterEgg()
-        {
-            string coolstory = @"New Team.
+    private static bool PrintEasterEgg()
+    {
+        string coolstory = @"New Team.
 New Rules.
 New Release-Platform.
 New Tools.
 
 
-GT4FS Extractor/Packer 3.3.0, by team eventHorizon";
+GT4FS Extractor/Packer 3.4.0, by team eventHorizon";
 
-            Console.WriteLine(coolstory);
-            Console.Write("\nDo you agree? (y/n): ");
-            var input = Console.ReadLine();
-            if (input.Contains("y"))
-            {
-                Console.Clear();
-                return true;
-            }
+        Console.WriteLine(coolstory);
+        Console.Write("\nDo you agree? (y/n): ");
+        string? input = Console.ReadLine();
+        if (!string.IsNullOrWhiteSpace(input) && input.Contains('y'))
+        {
             Console.Clear();
-
-            Console.WriteLine(@"Djinn:
-We have some unfinished business.");
-            Console.ReadLine();
-
-            return false;
+            return true;
         }
+        Console.Clear();
+
+        Console.WriteLine(@"Djinn:
+We have some unfinished business.");
+        Console.ReadLine();
+
+        return false;
     }
 }

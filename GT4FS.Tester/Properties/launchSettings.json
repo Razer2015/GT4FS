@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "GT4FS.Tester": {
+      "commandName": "Project",
+      "commandLineArgs": "pack-append -r \"D:\\Modding_Research\\Gran_Turismo\\Gran_Turismo_HD\\1.2_US\\NPUA80019\\USRDIR\\GT4 - Copy.VOL\" -a \"C:\\Users\\nenkai\\Desktop\\temp\\GTAdhocToolchain\\docs\""
+    }
+  }
+}

@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="GT.Shared/GT.Shared.csproj" />
+  <Project Path="GT4FS.Core/GT4FS.Core.csproj" />
+  <Project Path="GT4FS.Tester/GT4FS.Tester.csproj" />
+</Solution>
