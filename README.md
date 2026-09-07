@@ -18,6 +18,11 @@ To repack:
   * `GT4_FIRST_PREV` - Gran Turismo 4 First Preview
 
 # Notes
+
+You can use [mkps2iso](https://github.com/N4gtan/mkps2iso) incase you need to build an iso file.
+
+Otherwise,
+
 IML2ISO is recommended, to build an iso off the game.
 
 https://github.com/pez2k/gt2tools/tree/master/ISOLayerMerge, to merge two iso layers (i.e GT4).
